@@ -7,17 +7,16 @@ create table if not exists public.tasks (
   description text,
   assignee text,
   priority text not null default 'medium' check (priority in ('low', 'medium', 'high')),
-  status text not null default 'todo' check (status in ('todo', 'in_progress', 'done')),
+  status text not null default 'todo',
   due_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 alter table public.tasks add column if not exists user_id uuid references auth.users(id) on delete cascade;
-alter table public.tasks alter column user_id set default auth.uid();
 
+create index if not exists tasks_user_id_idx on public.tasks(user_id);
 create index if not exists tasks_status_created_at_idx on public.tasks(status, created_at desc);
-create index if not exists tasks_user_id_created_at_idx on public.tasks(user_id, created_at desc);
 
 create or replace function public.set_updated_at()
 returns trigger as $$
@@ -34,23 +33,45 @@ for each row execute procedure public.set_updated_at();
 
 alter table public.tasks enable row level security;
 
+-- 旧 permissive policy を削除
+drop policy if exists "Allow read for anon and authenticated" on public.tasks;
+drop policy if exists "Allow insert for anon and authenticated" on public.tasks;
+drop policy if exists "Allow update for anon and authenticated" on public.tasks;
+drop policy if exists "Allow delete for anon and authenticated" on public.tasks;
+
+-- 旧 owner policy も作り直せるように削除
 drop policy if exists "Allow read for authenticated owner" on public.tasks;
+drop policy if exists "Allow insert for authenticated owner" on public.tasks;
+drop policy if exists "Allow update for authenticated owner" on public.tasks;
+drop policy if exists "Allow delete for authenticated owner" on public.tasks;
+
+-- 旧 status 制約を先に外してから移行
+alter table public.tasks drop constraint if exists tasks_status_check;
+
+update public.tasks
+set status = 'doing'
+where status = 'in_progress';
+
+alter table public.tasks alter column status set default 'todo';
+
+alter table public.tasks
+add constraint tasks_status_check
+check (status in ('todo', 'doing', 'waiting', 'done'));
+
+-- owner-based RLS
 create policy "Allow read for authenticated owner" on public.tasks
 for select to authenticated
 using (auth.uid() = user_id);
 
-drop policy if exists "Allow insert for authenticated owner" on public.tasks;
 create policy "Allow insert for authenticated owner" on public.tasks
 for insert to authenticated
 with check (auth.uid() = user_id);
 
-drop policy if exists "Allow update for authenticated owner" on public.tasks;
 create policy "Allow update for authenticated owner" on public.tasks
 for update to authenticated
 using (auth.uid() = user_id)
 with check (auth.uid() = user_id);
 
-drop policy if exists "Allow delete for authenticated owner" on public.tasks;
 create policy "Allow delete for authenticated owner" on public.tasks
 for delete to authenticated
 using (auth.uid() = user_id);
