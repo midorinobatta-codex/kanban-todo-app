@@ -2,6 +2,7 @@ create extension if not exists "pgcrypto";
 
 create table if not exists public.tasks (
   id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
   title text not null,
   description text,
   assignee text,
@@ -12,7 +13,11 @@ create table if not exists public.tasks (
   updated_at timestamptz not null default now()
 );
 
+alter table public.tasks add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.tasks alter column user_id set default auth.uid();
+
 create index if not exists tasks_status_created_at_idx on public.tasks(status, created_at desc);
+create index if not exists tasks_user_id_created_at_idx on public.tasks(user_id, created_at desc);
 
 create or replace function public.set_updated_at()
 returns trigger as $$
@@ -29,23 +34,23 @@ for each row execute procedure public.set_updated_at();
 
 alter table public.tasks enable row level security;
 
-drop policy if exists "Allow read for anon and authenticated" on public.tasks;
-create policy "Allow read for anon and authenticated" on public.tasks
-for select to anon, authenticated
-using (true);
+drop policy if exists "Allow read for authenticated owner" on public.tasks;
+create policy "Allow read for authenticated owner" on public.tasks
+for select to authenticated
+using (auth.uid() = user_id);
 
-drop policy if exists "Allow insert for anon and authenticated" on public.tasks;
-create policy "Allow insert for anon and authenticated" on public.tasks
-for insert to anon, authenticated
-with check (true);
+drop policy if exists "Allow insert for authenticated owner" on public.tasks;
+create policy "Allow insert for authenticated owner" on public.tasks
+for insert to authenticated
+with check (auth.uid() = user_id);
 
-drop policy if exists "Allow update for anon and authenticated" on public.tasks;
-create policy "Allow update for anon and authenticated" on public.tasks
-for update to anon, authenticated
-using (true)
-with check (true);
+drop policy if exists "Allow update for authenticated owner" on public.tasks;
+create policy "Allow update for authenticated owner" on public.tasks
+for update to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
 
-drop policy if exists "Allow delete for anon and authenticated" on public.tasks;
-create policy "Allow delete for anon and authenticated" on public.tasks
-for delete to anon, authenticated
-using (true);
+drop policy if exists "Allow delete for authenticated owner" on public.tasks;
+create policy "Allow delete for authenticated owner" on public.tasks
+for delete to authenticated
+using (auth.uid() = user_id);
