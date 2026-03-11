@@ -2,7 +2,14 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { getSupabaseClient } from '@/lib/supabase/client';
-import { PRIORITY_LABELS, STATUS_LABELS, STATUS_ORDER, Task, TaskPriority, TaskStatus } from '@/lib/types';
+import {
+  PRIORITY_LABELS,
+  TASK_PROGRESS_LABELS,
+  TASK_PROGRESS_ORDER,
+  type Task,
+  type TaskPriority,
+  type TaskProgress,
+} from '@/lib/types';
 
 const defaultNewTaskState = {
   title: '',
@@ -89,14 +96,15 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
   }, [keyword, priorityFilter, tasks]);
 
   const groupedTasks = useMemo(() => {
-    return STATUS_ORDER.reduce(
+    return TASK_PROGRESS_ORDER.reduce(
       (acc, status) => {
         acc[status] = filteredTasks.filter((task) => task.status === status);
         return acc;
       },
       {
         todo: [] as Task[],
-        in_progress: [] as Task[],
+        doing: [] as Task[],
+        waiting: [] as Task[],
         done: [] as Task[]
       }
     );
@@ -133,7 +141,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
     setSaving(false);
   };
 
-  const updateStatus = async (task: Task, status: TaskStatus) => {
+  const updateStatus = async (task: Task, status: TaskProgress) => {
     if (task.status === status) return;
 
     setUpdatingTaskId(task.id);
@@ -272,11 +280,11 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
       {loading ? (
         <p className="text-sm text-slate-500">読み込み中...</p>
       ) : (
-        <section className="grid gap-4 lg:grid-cols-3">
-          {STATUS_ORDER.map((status) => (
+        <section className="grid gap-4 lg:grid-cols-4">
+          {TASK_PROGRESS_ORDER.map((status) => (
             <article key={status} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="mb-3 text-lg font-semibold">
-                {STATUS_LABELS[status]} <span className="text-sm text-slate-500">({groupedTasks[status].length})</span>
+                {TASK_PROGRESS_LABELS[status]} <span className="text-sm text-slate-500">({groupedTasks[status].length})</span>
               </h2>
               <div className="space-y-3">
                 {groupedTasks[status].map((task) => {
@@ -299,7 +307,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                         )}
                       </div>
                       <div className="mt-3 flex flex-wrap gap-2">
-                        {STATUS_ORDER.map((nextStatus) => (
+                        {TASK_PROGRESS_ORDER.map((nextStatus) => (
                           <button
                             type="button"
                             key={nextStatus}
@@ -307,7 +315,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                             disabled={disabled || task.status === nextStatus}
                             className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
                           >
-                            {STATUS_LABELS[nextStatus]}
+                            {TASK_PROGRESS_LABELS[nextStatus]}
                           </button>
                         ))}
                         <button
