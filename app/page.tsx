@@ -14,16 +14,22 @@ export default function HomePage() {
     let mounted = true;
 
     const checkSession = async () => {
-      const { data } = await getSupabaseClient().auth.getSession();
+      try {
+        const { data } = await getSupabaseClient().auth.getSession();
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      if (!data.session) {
-        router.replace('/login');
-        return;
+        if (!data.session) {
+          router.replace('/login');
+          return;
+        }
+
+        setCheckingSession(false);
+      } catch {
+        if (mounted) {
+          router.replace('/login');
+        }
       }
-
-      setCheckingSession(false);
     };
 
     void checkSession();

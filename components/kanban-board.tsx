@@ -171,13 +171,13 @@ export function KanbanBoard() {
 
       if (logoutError) {
         setError(logoutError.message);
-        setLoggingOut(false);
         return;
       }
 
       router.replace('/login');
     } catch {
       setError('ログアウトに失敗しました。');
+    } finally {
       setLoggingOut(false);
     }
   };
