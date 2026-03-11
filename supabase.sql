@@ -18,8 +18,11 @@ alter table public.tasks alter column user_id set default auth.uid();
 
 -- status migration: old values -> new progress-only values
 update public.tasks
-set status = 'doing'
-where status = 'in_progress';
+set status = case
+  when status = 'in_progress' then 'doing'
+  when status in ('todo', 'doing', 'waiting', 'done') then status
+  else 'todo'
+end;
 
 alter table public.tasks drop constraint if exists tasks_status_check;
 alter table public.tasks

@@ -273,7 +273,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
       {loading ? (
         <p className="text-sm text-slate-500">読み込み中...</p>
       ) : (
-        <section className="grid gap-4 xl:grid-cols-4">
+        <section className="grid gap-4 lg:grid-cols-4">
           {TASK_PROGRESS_ORDER.map((status) => (
             <article key={status} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
               <h2 className="mb-3 text-lg font-semibold">

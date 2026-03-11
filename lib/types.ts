@@ -25,8 +25,6 @@ export const TASK_PROGRESS_LABELS: Record<TaskProgress, string> = {
   done: '完了'
 };
 
-export const STATUS_LABELS = TASK_PROGRESS_LABELS;
-
 export const PRIORITY_LABELS: Record<TaskPriority, string> = {
   low: '低',
   medium: '中',
@@ -34,4 +32,3 @@ export const PRIORITY_LABELS: Record<TaskPriority, string> = {
 };
 
 export const TASK_PROGRESS_ORDER: TaskProgress[] = ['todo', 'doing', 'waiting', 'done'];
-export const STATUS_ORDER = TASK_PROGRESS_ORDER;

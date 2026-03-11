@@ -35,7 +35,7 @@ cp .env.example .env.local
 
 `supabase.sql` を Supabase SQL Editor で実行します。
 
-> 既存データがある場合、`status = 'in_progress'` は自動で `doing` へ移行されます。
+> 既存データがある場合、`status = 'in_progress'` は `doing` へ移行され、既知以外の値は安全側で `todo` に正規化されます。
 
 4. Supabase Auth でユーザーを作成
 
