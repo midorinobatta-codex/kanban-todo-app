@@ -29,8 +29,6 @@ for each row execute procedure public.set_updated_at();
 
 alter table public.tasks enable row level security;
 
--- Authenticated users only: tasks are accessible after Supabase Auth login.
-
 drop policy if exists "Allow authenticated select" on public.tasks;
 create policy "Allow authenticated select" on public.tasks
 for select to authenticated
