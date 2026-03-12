@@ -4,7 +4,6 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { getSupabaseClient } from '@/lib/supabase/client';
 import {
   IMPORTANCE_LABELS,
-  PRIORITY_LABELS,
   TASK_IMPORTANCE_VALUES,
   TASK_GTD_LABELS,
   TASK_GTD_VALUES,
@@ -80,7 +79,6 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
   const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null);
   const [newTask, setNewTask] = useState(defaultNewTaskState);
   const [keyword, setKeyword] = useState('');
-  const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all');
   const [gtdFilter, setGtdFilter] = useState<'all' | TaskGtdCategory>('all');
   const [importanceFilter, setImportanceFilter] = useState<'all' | TaskImportance>('all');
   const [urgencyFilter, setUrgencyFilter] = useState<'all' | TaskUrgency>('all');
@@ -122,9 +120,6 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
     const normalizedKeyword = keyword.trim().toLowerCase();
 
     return tasks.filter((task) => {
-      const byPriority = priorityFilter === 'all' ? true : task.priority === priorityFilter;
-      if (!byPriority) return false;
-
       const byGtdCategory = gtdFilter === 'all' ? true : task.gtd_category === gtdFilter;
       if (!byGtdCategory) return false;
 
@@ -139,7 +134,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
       const haystack = `${task.title} ${task.description ?? ''} ${task.assignee ?? ''}`.toLowerCase();
       return haystack.includes(normalizedKeyword);
     });
-  }, [gtdFilter, importanceFilter, keyword, priorityFilter, tasks, urgencyFilter]);
+  }, [gtdFilter, importanceFilter, keyword, tasks, urgencyFilter]);
 
   const groupedTasks = useMemo(() => {
     return TASK_PROGRESS_ORDER.reduce(
@@ -284,24 +279,13 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         </div>
       </header>
 
-      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 lg:grid-cols-5">
+      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 lg:grid-cols-4">
         <input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
           placeholder="タイトル・説明・担当者で検索"
           className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-3"
         />
-        <select
-          value={priorityFilter}
-          onChange={(e) => setPriorityFilter(e.target.value as 'all' | TaskPriority)}
-          className="rounded border border-slate-300 px-3 py-2 text-sm"
-        >
-          <option value="all">優先度: すべて</option>
-          <option value="low">優先度: 低</option>
-          <option value="medium">優先度: 中</option>
-          <option value="high">優先度: 高</option>
-        </select>
-
         <select
           value={gtdFilter}
           onChange={(e) => setGtdFilter(e.target.value as 'all' | TaskGtdCategory)}
@@ -388,15 +372,6 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
             className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
             rows={3}
           />
-          <select
-            value={newTask.priority}
-            onChange={(e) => setNewTask((prev) => ({ ...prev, priority: e.target.value as TaskPriority }))}
-            className="rounded border border-slate-300 px-3 py-2 text-sm"
-          >
-            <option value="low">優先度: 低</option>
-            <option value="medium">優先度: 中</option>
-            <option value="high">優先度: 高</option>
-          </select>
           <select
             value={newTask.importance}
             onChange={(e) => setNewTask((prev) => ({ ...prev, importance: e.target.value as TaskImportance }))}
@@ -516,7 +491,6 @@ function TaskCard({ task, disabled, onUpdateStatus, onDelete }: TaskCardProps) {
       {task.description && <p className="mt-1 text-sm text-slate-600">{task.description}</p>}
       <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
         {task.assignee && <span className="rounded bg-slate-100 px-2 py-1">担当: {task.assignee}</span>}
-        <span className={`rounded px-2 py-1 ${levelClassName[task.priority]}`}>優先度: {PRIORITY_LABELS[task.priority]}</span>
         <span className={`rounded px-2 py-1 ${levelClassName[task.importance]}`}>重要度: {IMPORTANCE_LABELS[task.importance]}</span>
         <span className={`rounded px-2 py-1 ${levelClassName[task.urgency]}`}>緊急度: {URGENCY_LABELS[task.urgency]}</span>
         <span className="rounded bg-indigo-100 px-2 py-1 text-indigo-700">GTD: {TASK_GTD_LABELS[task.gtd_category]}</span>
