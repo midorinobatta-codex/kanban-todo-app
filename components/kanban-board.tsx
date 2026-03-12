@@ -27,7 +27,8 @@ const defaultNewTaskState = {
   importance: 'medium' as TaskImportance,
   urgency: 'medium' as TaskUrgency,
   dueDate: '',
-  gtdCategory: 'next_action' as TaskGtdCategory
+  gtdCategory: 'next_action' as TaskGtdCategory,
+  projectTaskId: ''
 };
 
 const levelClassName = {
@@ -91,6 +92,30 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
   const [urgencyFilter, setUrgencyFilter] = useState<'all' | TaskUrgency>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
   const [showSomedayInNormalViews, setShowSomedayInNormalViews] = useState(false);
+
+
+  const projectTasks = useMemo(() => tasks.filter((task) => task.gtd_category === 'project'), [tasks]);
+
+  const projectTaskMap = useMemo(() => {
+    return projectTasks.reduce(
+      (acc, task) => {
+        acc[task.id] = task;
+        return acc;
+      },
+      {} as Record<string, Task>
+    );
+  }, [projectTasks]);
+
+  const projectNextActionCountMap = useMemo(() => {
+    return tasks.reduce(
+      (acc, task) => {
+        if (task.gtd_category !== 'next_action' || !task.project_task_id) return acc;
+        acc[task.project_task_id] = (acc[task.project_task_id] ?? 0) + 1;
+        return acc;
+      },
+      {} as Record<string, number>
+    );
+  }, [tasks]);
 
   const fetchTasks = useCallback(
     async (showRefreshing = false) => {
@@ -228,7 +253,8 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         urgency: newTask.urgency,
         due_date: newTask.dueDate || null,
         status: 'todo',
-        gtd_category: newTask.gtdCategory
+        gtd_category: newTask.gtdCategory,
+        project_task_id: newTask.gtdCategory === 'next_action' ? newTask.projectTaskId || null : null
       })
       .select('*')
       .single();
@@ -266,7 +292,35 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
     setUpdatingTaskId(null);
   };
 
+  const updateProjectLink = async (task: Task, projectTaskId: string | null) => {
+    if (task.gtd_category !== 'next_action') return;
+
+    const normalizedProjectTaskId = projectTaskId || null;
+    if (task.project_task_id === normalizedProjectTaskId) return;
+
+    setUpdatingTaskId(task.id);
+    setError(null);
+
+    const { data, error: updateError } = await getSupabaseClient()
+      .from('tasks')
+      .update({ project_task_id: normalizedProjectTaskId })
+      .eq('id', task.id)
+      .select('*')
+      .single();
+
+    if (updateError) {
+      setError(updateError.message);
+      setUpdatingTaskId(null);
+      return;
+    }
+
+    setTasks((prev) => prev.map((item) => (item.id === task.id ? (data as Task) : item)));
+    setUpdatingTaskId(null);
+  };
+
   const deleteTask = async (id: string) => {
+    const deletingTask = tasks.find((task) => task.id === id) ?? null;
+
     setUpdatingTaskId(id);
     setError(null);
 
@@ -278,7 +332,17 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
       return;
     }
 
-    setTasks((prev) => prev.filter((task) => task.id !== id));
+    setTasks((prev) => {
+      const remainingTasks = prev.filter((task) => task.id !== id);
+
+      if (deletingTask?.gtd_category !== 'project') {
+        return remainingTasks;
+      }
+
+      return remainingTasks.map((task) =>
+        task.project_task_id === id ? { ...task, project_task_id: null } : task
+      );
+    });
     setUpdatingTaskId(null);
   };
 
@@ -455,7 +519,16 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
           />
           <select
             value={newTask.gtdCategory}
-            onChange={(e) => setNewTask((prev) => ({ ...prev, gtdCategory: e.target.value as TaskGtdCategory }))}
+            onChange={(e) =>
+              setNewTask((prev) => {
+                const gtdCategory = e.target.value as TaskGtdCategory;
+                return {
+                  ...prev,
+                  gtdCategory,
+                  projectTaskId: gtdCategory === 'next_action' ? prev.projectTaskId : ''
+                };
+              })
+            }
             className="rounded border border-slate-300 px-3 py-2 text-sm"
           >
             {TASK_GTD_VALUES.map((category) => (
@@ -464,6 +537,21 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
               </option>
             ))}
           </select>
+          {newTask.gtdCategory === 'next_action' && (
+            <select
+              value={newTask.projectTaskId}
+              onChange={(e) => setNewTask((prev) => ({ ...prev, projectTaskId: e.target.value }))}
+              className="rounded border border-slate-300 px-3 py-2 text-sm md:col-span-2"
+            >
+              <option value="">関連プロジェクト: 未設定</option>
+              {projectTasks.map((projectTask) => (
+                <option key={projectTask.id} value={projectTask.id}>
+                  関連プロジェクト: {projectTask.title}
+                </option>
+              ))}
+            </select>
+          )}
+
           <button
             type="submit"
             disabled={saving}
@@ -495,6 +583,10 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                         disabled={updatingTaskId === task.id}
                         onUpdateStatus={updateStatus}
                         onDelete={deleteTask}
+                        onUpdateProjectLink={updateProjectLink}
+                        projectTasks={projectTasks}
+                        projectTaskMap={projectTaskMap}
+                        projectNextActionCountMap={projectNextActionCountMap}
                       />
                     ))}
                     {groupedTasks[status].length === 0 && <p className="text-sm text-slate-400">条件に一致するタスクはありません</p>}
@@ -516,6 +608,10 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                         disabled={updatingTaskId === task.id}
                         onUpdateStatus={updateStatus}
                         onDelete={deleteTask}
+                        onUpdateProjectLink={updateProjectLink}
+                        projectTasks={projectTasks}
+                        projectTaskMap={projectTaskMap}
+                        projectNextActionCountMap={projectNextActionCountMap}
                       />
                     ))}
                     {matrixTasks[quadrant.key].length === 0 && <p className="text-sm text-slate-400">タスクなし</p>}
@@ -538,6 +634,10 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                         disabled={updatingTaskId === task.id}
                         onUpdateStatus={updateStatus}
                         onDelete={deleteTask}
+                        onUpdateProjectLink={updateProjectLink}
+                        projectTasks={projectTasks}
+                        projectTaskMap={projectTaskMap}
+                        projectNextActionCountMap={projectNextActionCountMap}
                       />
                     ))}
                     {gtdTasks[section.key].length === 0 && <p className="text-sm text-slate-400">タスクなし</p>}
@@ -557,9 +657,24 @@ type TaskCardProps = {
   disabled: boolean;
   onUpdateStatus: (task: Task, status: TaskProgress) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
+  onUpdateProjectLink: (task: Task, projectTaskId: string | null) => Promise<void>;
+  projectTasks: Task[];
+  projectTaskMap: Record<string, Task>;
+  projectNextActionCountMap: Record<string, number>;
 };
 
-function TaskCard({ task, disabled, onUpdateStatus, onDelete }: TaskCardProps) {
+function TaskCard({
+  task,
+  disabled,
+  onUpdateStatus,
+  onDelete,
+  onUpdateProjectLink,
+  projectTasks,
+  projectTaskMap,
+  projectNextActionCountMap
+}: TaskCardProps) {
+  const linkedProjectTitle = task.project_task_id ? projectTaskMap[task.project_task_id]?.title : null;
+  const linkedNextActionCount = task.gtd_category === 'project' ? projectNextActionCountMap[task.id] ?? 0 : 0;
   return (
     <div className="rounded border border-slate-200 p-3">
       <p className="font-medium">{task.title}</p>
@@ -569,12 +684,41 @@ function TaskCard({ task, disabled, onUpdateStatus, onDelete }: TaskCardProps) {
         <span className={`rounded px-2 py-1 ${levelClassName[task.importance]}`}>重要度: {IMPORTANCE_LABELS[task.importance]}</span>
         <span className={`rounded px-2 py-1 ${levelClassName[task.urgency]}`}>緊急度: {URGENCY_LABELS[task.urgency]}</span>
         <span className="rounded bg-indigo-100 px-2 py-1 text-indigo-700">GTD: {TASK_GTD_LABELS[task.gtd_category]}</span>
+        {task.gtd_category === 'next_action' && linkedProjectTitle && (
+          <span className="rounded bg-cyan-100 px-2 py-1 text-cyan-700">PJ: {linkedProjectTitle}</span>
+        )}
+        {task.gtd_category === 'project' && (
+          <span className="rounded bg-violet-100 px-2 py-1 text-violet-700">次アクション: {linkedNextActionCount}件</span>
+        )}
+        {task.gtd_category === 'project' && linkedNextActionCount === 0 && (
+          <span className="rounded bg-amber-100 px-2 py-1 text-amber-700">次アクション未設定</span>
+        )}
         {task.due_date && (
           <span className={`rounded px-2 py-1 ${isOverdue(task.due_date) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100'}`}>
             期限: {task.due_date}
           </span>
         )}
       </div>
+      {task.gtd_category === 'next_action' && (
+        <div className="mt-3">
+          <label className="mb-1 block text-xs text-slate-500">関連プロジェクト</label>
+          <select
+            value={task.project_task_id ?? ''}
+            onChange={(e) => void onUpdateProjectLink(task, e.target.value || null)}
+            disabled={disabled}
+            className="w-full rounded border border-slate-300 px-2 py-1 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <option value="">未設定</option>
+            {projectTasks
+              .filter((projectTask) => projectTask.id !== task.id)
+              .map((projectTask) => (
+                <option key={projectTask.id} value={projectTask.id}>
+                  {projectTask.title}
+                </option>
+              ))}
+          </select>
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap gap-2">
         {TASK_PROGRESS_ORDER.map((nextStatus) => (
           <button
