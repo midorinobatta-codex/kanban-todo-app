@@ -4,9 +4,12 @@ import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { getSupabaseClient } from '@/lib/supabase/client';
 import {
   PRIORITY_LABELS,
+  TASK_GTD_LABELS,
+  TASK_GTD_VALUES,
   TASK_PROGRESS_LABELS,
   TASK_PROGRESS_ORDER,
   type Task,
+  type TaskGtdCategory,
   type TaskPriority,
   type TaskProgress,
 } from '@/lib/types';
@@ -16,7 +19,8 @@ const defaultNewTaskState = {
   description: '',
   assignee: '',
   priority: 'medium' as TaskPriority,
-  dueDate: ''
+  dueDate: '',
+  gtdCategory: 'next_action' as TaskGtdCategory
 };
 
 const priorityClassName: Record<TaskPriority, string> = {
@@ -49,6 +53,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
   const [newTask, setNewTask] = useState(defaultNewTaskState);
   const [keyword, setKeyword] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all');
+  const [gtdFilter, setGtdFilter] = useState<'all' | TaskGtdCategory>('all');
 
   const fetchTasks = useCallback(
     async (showRefreshing = false) => {
@@ -88,12 +93,15 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
     return tasks.filter((task) => {
       const byPriority = priorityFilter === 'all' ? true : task.priority === priorityFilter;
       if (!byPriority) return false;
+
+      const byGtdCategory = gtdFilter === 'all' ? true : task.gtd_category === gtdFilter;
+      if (!byGtdCategory) return false;
       if (!normalizedKeyword) return true;
 
       const haystack = `${task.title} ${task.description ?? ''} ${task.assignee ?? ''}`.toLowerCase();
       return haystack.includes(normalizedKeyword);
     });
-  }, [keyword, priorityFilter, tasks]);
+  }, [gtdFilter, keyword, priorityFilter, tasks]);
 
   const groupedTasks = useMemo(() => {
     return TASK_PROGRESS_ORDER.reduce(
@@ -126,7 +134,8 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         assignee: newTask.assignee.trim() || null,
         priority: newTask.priority,
         due_date: newTask.dueDate || null,
-        status: 'todo'
+        status: 'todo',
+        gtd_category: newTask.gtdCategory
       })
       .select('*')
       .single();
@@ -208,7 +217,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         </div>
       </header>
 
-      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-4">
+      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-5">
         <input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
@@ -224,6 +233,19 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
           <option value="low">優先度: 低</option>
           <option value="medium">優先度: 中</option>
           <option value="high">優先度: 高</option>
+        </select>
+
+        <select
+          value={gtdFilter}
+          onChange={(e) => setGtdFilter(e.target.value as 'all' | TaskGtdCategory)}
+          className="rounded border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="all">GTD: すべて</option>
+          {TASK_GTD_VALUES.map((category) => (
+            <option key={category} value={category}>
+              GTD: {TASK_GTD_LABELS[category]}
+            </option>
+          ))}
         </select>
       </section>
 
@@ -265,6 +287,17 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
             onChange={(e) => setNewTask((prev) => ({ ...prev, dueDate: e.target.value }))}
             className="rounded border border-slate-300 px-3 py-2 text-sm"
           />
+          <select
+            value={newTask.gtdCategory}
+            onChange={(e) => setNewTask((prev) => ({ ...prev, gtdCategory: e.target.value as TaskGtdCategory }))}
+            className="rounded border border-slate-300 px-3 py-2 text-sm"
+          >
+            {TASK_GTD_VALUES.map((category) => (
+              <option key={category} value={category}>
+                GTD: {TASK_GTD_LABELS[category]}
+              </option>
+            ))}
+          </select>
           <button
             type="submit"
             disabled={saving}
@@ -298,6 +331,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                         <span className={`rounded px-2 py-1 ${priorityClassName[task.priority]}`}>
                           優先度: {PRIORITY_LABELS[task.priority]}
                         </span>
+                        <span className="rounded bg-indigo-100 px-2 py-1 text-indigo-700">GTD: {TASK_GTD_LABELS[task.gtd_category]}</span>
                         {task.due_date && (
                           <span
                             className={`rounded px-2 py-1 ${isOverdue(task.due_date) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100'}`}

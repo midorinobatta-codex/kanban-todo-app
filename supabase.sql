@@ -8,15 +8,18 @@ create table if not exists public.tasks (
   assignee text,
   priority text not null default 'medium' check (priority in ('low', 'medium', 'high')),
   status text not null default 'todo',
+  gtd_category text not null default 'next_action',
   due_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 alter table public.tasks add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.tasks add column if not exists gtd_category text not null default 'next_action';
 
 create index if not exists tasks_user_id_idx on public.tasks(user_id);
 create index if not exists tasks_status_created_at_idx on public.tasks(status, created_at desc);
+create index if not exists tasks_user_gtd_category_idx on public.tasks(user_id, gtd_category);
 
 create or replace function public.set_updated_at()
 returns trigger as $$
@@ -47,6 +50,7 @@ drop policy if exists "Allow delete for authenticated owner" on public.tasks;
 
 -- 旧 status 制約を先に外してから移行
 alter table public.tasks drop constraint if exists tasks_status_check;
+alter table public.tasks drop constraint if exists tasks_gtd_category_check;
 
 update public.tasks
 set status = 'doing'
@@ -57,6 +61,16 @@ alter table public.tasks alter column status set default 'todo';
 alter table public.tasks
 add constraint tasks_status_check
 check (status in ('todo', 'doing', 'waiting', 'done'));
+
+update public.tasks
+set gtd_category = 'next_action'
+where gtd_category is null;
+
+alter table public.tasks alter column gtd_category set default 'next_action';
+
+alter table public.tasks
+add constraint tasks_gtd_category_check
+check (gtd_category in ('next_action', 'delegated', 'project', 'someday'));
 
 -- owner-based RLS
 create policy "Allow read for authenticated owner" on public.tasks
