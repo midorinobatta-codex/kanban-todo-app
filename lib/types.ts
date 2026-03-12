@@ -58,6 +58,7 @@ export type Task = {
   urgency: TaskUrgency;
   status: TaskProgress;
   gtd_category: TaskGtdCategory;
+  project_task_id: string | null;
   due_date: string | null;
   created_at: string;
   updated_at: string;

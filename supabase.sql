@@ -11,21 +11,32 @@ create table if not exists public.tasks (
   urgency text not null default 'medium' check (urgency in ('low', 'medium', 'high')),
   status text not null default 'todo',
   gtd_category text not null default 'next_action',
+  project_task_id uuid,
   due_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 alter table public.tasks add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.tasks alter column user_id set default auth.uid();
 alter table public.tasks add column if not exists gtd_category text not null default 'next_action';
 alter table public.tasks add column if not exists importance text not null default 'medium';
 alter table public.tasks add column if not exists urgency text not null default 'medium';
+
+alter table public.tasks add column if not exists project_task_id uuid;
+
+-- FK: next_action などのタスクから project タスクを自己参照で紐づける
+alter table public.tasks drop constraint if exists tasks_project_task_id_fkey;
+alter table public.tasks
+add constraint tasks_project_task_id_fkey
+foreign key (project_task_id) references public.tasks(id) on delete set null;
 
 create index if not exists tasks_user_id_idx on public.tasks(user_id);
 create index if not exists tasks_status_created_at_idx on public.tasks(status, created_at desc);
 create index if not exists tasks_user_gtd_category_idx on public.tasks(user_id, gtd_category);
 create index if not exists tasks_user_importance_idx on public.tasks(user_id, importance);
 create index if not exists tasks_user_urgency_idx on public.tasks(user_id, urgency);
+create index if not exists tasks_project_task_id_idx on public.tasks(project_task_id);
 
 create or replace function public.set_updated_at()
 returns trigger as $$
