@@ -44,11 +44,31 @@ type KanbanBoardProps = {
   loggingOut?: boolean;
 };
 
+type ViewMode = 'kanban' | 'matrix';
+
+type MatrixQuadrantKey = 'important_urgent' | 'important_notUrgent' | 'notImportant_urgent' | 'notImportant_notUrgent';
+
+const MATRIX_QUADRANTS: Array<{
+  key: MatrixQuadrantKey;
+  title: string;
+  subtitle: string;
+}> = [
+  { key: 'important_urgent', title: '重要 × 緊急', subtitle: '今すぐ対応' },
+  { key: 'important_notUrgent', title: '重要 × 非緊急', subtitle: '計画的に進める' },
+  { key: 'notImportant_urgent', title: '非重要 × 緊急', subtitle: 'できれば委任' },
+  { key: 'notImportant_notUrgent', title: '非重要 × 非緊急', subtitle: '後回し候補' }
+];
+
 function isOverdue(dueDate: string | null) {
   if (!dueDate) return false;
+
+  const [year, month, day] = dueDate.split('-').map(Number);
+  const due = new Date(year, month - 1, day);
+
   const today = new Date();
-  const due = new Date(dueDate);
-  return due < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const todayOnly = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+
+  return due < todayOnly;
 }
 
 export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }: KanbanBoardProps) {
@@ -64,6 +84,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
   const [gtdFilter, setGtdFilter] = useState<'all' | TaskGtdCategory>('all');
   const [importanceFilter, setImportanceFilter] = useState<'all' | TaskImportance>('all');
   const [urgencyFilter, setUrgencyFilter] = useState<'all' | TaskUrgency>('all');
+  const [viewMode, setViewMode] = useState<ViewMode>('kanban');
 
   const fetchTasks = useCallback(
     async (showRefreshing = false) => {
@@ -131,6 +152,33 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         doing: [] as Task[],
         waiting: [] as Task[],
         done: [] as Task[]
+      }
+    );
+  }, [filteredTasks]);
+
+  const matrixTasks = useMemo(() => {
+    return filteredTasks.reduce(
+      (acc, task) => {
+        const isImportantHigh = task.importance === 'high';
+        const isUrgencyHigh = task.urgency === 'high';
+
+        if (isImportantHigh && isUrgencyHigh) {
+          acc.important_urgent.push(task);
+        } else if (isImportantHigh && !isUrgencyHigh) {
+          acc.important_notUrgent.push(task);
+        } else if (!isImportantHigh && isUrgencyHigh) {
+          acc.notImportant_urgent.push(task);
+        } else {
+          acc.notImportant_notUrgent.push(task);
+        }
+
+        return acc;
+      },
+      {
+        important_urgent: [] as Task[],
+        important_notUrgent: [] as Task[],
+        notImportant_urgent: [] as Task[],
+        notImportant_notUrgent: [] as Task[]
       }
     );
   }, [filteredTasks]);
@@ -295,6 +343,29 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="inline-flex rounded-md border border-slate-300 bg-slate-100 p-1">
+          <button
+            type="button"
+            onClick={() => setViewMode('kanban')}
+            className={`rounded px-3 py-1.5 text-sm ${
+              viewMode === 'kanban' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            カンバン表示
+          </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('matrix')}
+            className={`rounded px-3 py-1.5 text-sm ${
+              viewMode === 'matrix' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            マトリクス表示
+          </button>
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
         <h2 className="mb-4 text-lg font-semibold">タスク追加</h2>
         <form onSubmit={(e) => void addTask(e)} className="grid gap-3 md:grid-cols-2">
           <input
@@ -380,65 +451,102 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
       {loading ? (
         <p className="text-sm text-slate-500">読み込み中...</p>
       ) : (
-        <section className="grid gap-4 lg:grid-cols-4">
-          {TASK_PROGRESS_ORDER.map((status) => (
-            <article key={status} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-              <h2 className="mb-3 text-lg font-semibold">
-                {TASK_PROGRESS_LABELS[status]} <span className="text-sm text-slate-500">({groupedTasks[status].length})</span>
-              </h2>
-              <div className="space-y-3">
-                {groupedTasks[status].map((task) => {
-                  const disabled = updatingTaskId === task.id;
-                  return (
-                    <div key={task.id} className="rounded border border-slate-200 p-3">
-                      <p className="font-medium">{task.title}</p>
-                      {task.description && <p className="mt-1 text-sm text-slate-600">{task.description}</p>}
-                      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
-                        {task.assignee && <span className="rounded bg-slate-100 px-2 py-1">担当: {task.assignee}</span>}
-                        <span className={`rounded px-2 py-1 ${levelClassName[task.priority]}`}>
-                          優先度: {PRIORITY_LABELS[task.priority]}
-                        </span>
-                        <span className={`rounded px-2 py-1 ${levelClassName[task.importance]}`}>重要度: {IMPORTANCE_LABELS[task.importance]}</span>
-                        <span className={`rounded px-2 py-1 ${levelClassName[task.urgency]}`}>緊急度: {URGENCY_LABELS[task.urgency]}</span>
-                        <span className="rounded bg-indigo-100 px-2 py-1 text-indigo-700">GTD: {TASK_GTD_LABELS[task.gtd_category]}</span>
-                        {task.due_date && (
-                          <span
-                            className={`rounded px-2 py-1 ${isOverdue(task.due_date) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100'}`}
-                          >
-                            期限: {task.due_date}
-                          </span>
-                        )}
-                      </div>
-                      <div className="mt-3 flex flex-wrap gap-2">
-                        {TASK_PROGRESS_ORDER.map((nextStatus) => (
-                          <button
-                            type="button"
-                            key={nextStatus}
-                            onClick={() => void updateStatus(task, nextStatus)}
-                            disabled={disabled || task.status === nextStatus}
-                            className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                          >
-                            {TASK_PROGRESS_LABELS[nextStatus]}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => void deleteTask(task.id)}
-                          disabled={disabled}
-                          className="rounded border border-rose-300 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          削除
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-                {groupedTasks[status].length === 0 && <p className="text-sm text-slate-400">条件に一致するタスクはありません</p>}
-              </div>
-            </article>
-          ))}
-        </section>
+        <>
+          {viewMode === 'kanban' ? (
+            <section className="grid gap-4 lg:grid-cols-4">
+              {TASK_PROGRESS_ORDER.map((status) => (
+                <article key={status} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="mb-3 text-lg font-semibold">
+                    {TASK_PROGRESS_LABELS[status]} <span className="text-sm text-slate-500">({groupedTasks[status].length})</span>
+                  </h2>
+                  <div className="space-y-3">
+                    {groupedTasks[status].map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        disabled={updatingTaskId === task.id}
+                        onUpdateStatus={updateStatus}
+                        onDelete={deleteTask}
+                      />
+                    ))}
+                    {groupedTasks[status].length === 0 && <p className="text-sm text-slate-400">条件に一致するタスクはありません</p>}
+                  </div>
+                </article>
+              ))}
+            </section>
+          ) : (
+            <section className="grid gap-4 md:grid-cols-2">
+              {MATRIX_QUADRANTS.map((quadrant) => (
+                <article key={quadrant.key} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="text-lg font-semibold">{quadrant.title}</h2>
+                  <p className="mb-3 text-sm text-slate-500">{quadrant.subtitle}</p>
+                  <div className="space-y-3">
+                    {matrixTasks[quadrant.key].map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        disabled={updatingTaskId === task.id}
+                        onUpdateStatus={updateStatus}
+                        onDelete={deleteTask}
+                      />
+                    ))}
+                    {matrixTasks[quadrant.key].length === 0 && <p className="text-sm text-slate-400">タスクなし</p>}
+                  </div>
+                </article>
+              ))}
+            </section>
+          )}
+        </>
       )}
     </main>
+  );
+}
+
+type TaskCardProps = {
+  task: Task;
+  disabled: boolean;
+  onUpdateStatus: (task: Task, status: TaskProgress) => Promise<void>;
+  onDelete: (id: string) => Promise<void>;
+};
+
+function TaskCard({ task, disabled, onUpdateStatus, onDelete }: TaskCardProps) {
+  return (
+    <div className="rounded border border-slate-200 p-3">
+      <p className="font-medium">{task.title}</p>
+      {task.description && <p className="mt-1 text-sm text-slate-600">{task.description}</p>}
+      <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
+        {task.assignee && <span className="rounded bg-slate-100 px-2 py-1">担当: {task.assignee}</span>}
+        <span className={`rounded px-2 py-1 ${levelClassName[task.priority]}`}>優先度: {PRIORITY_LABELS[task.priority]}</span>
+        <span className={`rounded px-2 py-1 ${levelClassName[task.importance]}`}>重要度: {IMPORTANCE_LABELS[task.importance]}</span>
+        <span className={`rounded px-2 py-1 ${levelClassName[task.urgency]}`}>緊急度: {URGENCY_LABELS[task.urgency]}</span>
+        <span className="rounded bg-indigo-100 px-2 py-1 text-indigo-700">GTD: {TASK_GTD_LABELS[task.gtd_category]}</span>
+        {task.due_date && (
+          <span className={`rounded px-2 py-1 ${isOverdue(task.due_date) ? 'bg-rose-100 text-rose-700' : 'bg-slate-100'}`}>
+            期限: {task.due_date}
+          </span>
+        )}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {TASK_PROGRESS_ORDER.map((nextStatus) => (
+          <button
+            type="button"
+            key={nextStatus}
+            onClick={() => void onUpdateStatus(task, nextStatus)}
+            disabled={disabled || task.status === nextStatus}
+            className="rounded border border-slate-300 px-2 py-1 text-xs hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {TASK_PROGRESS_LABELS[nextStatus]}
+          </button>
+        ))}
+        <button
+          type="button"
+          onClick={() => void onDelete(task.id)}
+          disabled={disabled}
+          className="rounded border border-rose-300 px-2 py-1 text-xs text-rose-700 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          削除
+        </button>
+      </div>
+    </div>
   );
 }
