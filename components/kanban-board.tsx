@@ -3,15 +3,21 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { getSupabaseClient } from '@/lib/supabase/client';
 import {
+  IMPORTANCE_LABELS,
   PRIORITY_LABELS,
+  TASK_IMPORTANCE_VALUES,
   TASK_GTD_LABELS,
   TASK_GTD_VALUES,
   TASK_PROGRESS_LABELS,
   TASK_PROGRESS_ORDER,
+  TASK_URGENCY_VALUES,
+  URGENCY_LABELS,
   type Task,
   type TaskGtdCategory,
+  type TaskImportance,
   type TaskPriority,
   type TaskProgress,
+  type TaskUrgency,
 } from '@/lib/types';
 
 const defaultNewTaskState = {
@@ -19,15 +25,17 @@ const defaultNewTaskState = {
   description: '',
   assignee: '',
   priority: 'medium' as TaskPriority,
+  importance: 'medium' as TaskImportance,
+  urgency: 'medium' as TaskUrgency,
   dueDate: '',
   gtdCategory: 'next_action' as TaskGtdCategory
 };
 
-const priorityClassName: Record<TaskPriority, string> = {
+const levelClassName = {
   low: 'bg-emerald-100 text-emerald-700',
   medium: 'bg-amber-100 text-amber-700',
   high: 'bg-rose-100 text-rose-700'
-};
+} as const satisfies Record<TaskPriority | TaskImportance | TaskUrgency, string>;
 
 type KanbanBoardProps = {
   userId: string;
@@ -54,6 +62,8 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
   const [keyword, setKeyword] = useState('');
   const [priorityFilter, setPriorityFilter] = useState<'all' | TaskPriority>('all');
   const [gtdFilter, setGtdFilter] = useState<'all' | TaskGtdCategory>('all');
+  const [importanceFilter, setImportanceFilter] = useState<'all' | TaskImportance>('all');
+  const [urgencyFilter, setUrgencyFilter] = useState<'all' | TaskUrgency>('all');
 
   const fetchTasks = useCallback(
     async (showRefreshing = false) => {
@@ -96,12 +106,19 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
 
       const byGtdCategory = gtdFilter === 'all' ? true : task.gtd_category === gtdFilter;
       if (!byGtdCategory) return false;
+
+      const byImportance = importanceFilter === 'all' ? true : task.importance === importanceFilter;
+      if (!byImportance) return false;
+
+      const byUrgency = urgencyFilter === 'all' ? true : task.urgency === urgencyFilter;
+      if (!byUrgency) return false;
+
       if (!normalizedKeyword) return true;
 
       const haystack = `${task.title} ${task.description ?? ''} ${task.assignee ?? ''}`.toLowerCase();
       return haystack.includes(normalizedKeyword);
     });
-  }, [gtdFilter, keyword, priorityFilter, tasks]);
+  }, [gtdFilter, importanceFilter, keyword, priorityFilter, tasks, urgencyFilter]);
 
   const groupedTasks = useMemo(() => {
     return TASK_PROGRESS_ORDER.reduce(
@@ -133,6 +150,8 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         description: newTask.description.trim() || null,
         assignee: newTask.assignee.trim() || null,
         priority: newTask.priority,
+        importance: newTask.importance,
+        urgency: newTask.urgency,
         due_date: newTask.dueDate || null,
         status: 'todo',
         gtd_category: newTask.gtdCategory
@@ -217,7 +236,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         </div>
       </header>
 
-      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-5">
+      <section className="grid gap-3 rounded-lg border border-slate-200 bg-white p-4 shadow-sm md:grid-cols-3 lg:grid-cols-5">
         <input
           value={keyword}
           onChange={(e) => setKeyword(e.target.value)}
@@ -244,6 +263,32 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
           {TASK_GTD_VALUES.map((category) => (
             <option key={category} value={category}>
               GTD: {TASK_GTD_LABELS[category]}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={importanceFilter}
+          onChange={(e) => setImportanceFilter(e.target.value as 'all' | TaskImportance)}
+          className="rounded border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="all">重要度: すべて</option>
+          {TASK_IMPORTANCE_VALUES.map((importance) => (
+            <option key={importance} value={importance}>
+              重要度: {IMPORTANCE_LABELS[importance]}
+            </option>
+          ))}
+        </select>
+
+        <select
+          value={urgencyFilter}
+          onChange={(e) => setUrgencyFilter(e.target.value as 'all' | TaskUrgency)}
+          className="rounded border border-slate-300 px-3 py-2 text-sm"
+        >
+          <option value="all">緊急度: すべて</option>
+          {TASK_URGENCY_VALUES.map((urgency) => (
+            <option key={urgency} value={urgency}>
+              緊急度: {URGENCY_LABELS[urgency]}
             </option>
           ))}
         </select>
@@ -280,6 +325,28 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
             <option value="low">優先度: 低</option>
             <option value="medium">優先度: 中</option>
             <option value="high">優先度: 高</option>
+          </select>
+          <select
+            value={newTask.importance}
+            onChange={(e) => setNewTask((prev) => ({ ...prev, importance: e.target.value as TaskImportance }))}
+            className="rounded border border-slate-300 px-3 py-2 text-sm"
+          >
+            {TASK_IMPORTANCE_VALUES.map((importance) => (
+              <option key={importance} value={importance}>
+                重要度: {IMPORTANCE_LABELS[importance]}
+              </option>
+            ))}
+          </select>
+          <select
+            value={newTask.urgency}
+            onChange={(e) => setNewTask((prev) => ({ ...prev, urgency: e.target.value as TaskUrgency }))}
+            className="rounded border border-slate-300 px-3 py-2 text-sm"
+          >
+            {TASK_URGENCY_VALUES.map((urgency) => (
+              <option key={urgency} value={urgency}>
+                緊急度: {URGENCY_LABELS[urgency]}
+              </option>
+            ))}
           </select>
           <input
             type="date"
@@ -328,9 +395,11 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                       {task.description && <p className="mt-1 text-sm text-slate-600">{task.description}</p>}
                       <div className="mt-2 flex flex-wrap gap-2 text-xs text-slate-600">
                         {task.assignee && <span className="rounded bg-slate-100 px-2 py-1">担当: {task.assignee}</span>}
-                        <span className={`rounded px-2 py-1 ${priorityClassName[task.priority]}`}>
+                        <span className={`rounded px-2 py-1 ${levelClassName[task.priority]}`}>
                           優先度: {PRIORITY_LABELS[task.priority]}
                         </span>
+                        <span className={`rounded px-2 py-1 ${levelClassName[task.importance]}`}>重要度: {IMPORTANCE_LABELS[task.importance]}</span>
+                        <span className={`rounded px-2 py-1 ${levelClassName[task.urgency]}`}>緊急度: {URGENCY_LABELS[task.urgency]}</span>
                         <span className="rounded bg-indigo-100 px-2 py-1 text-indigo-700">GTD: {TASK_GTD_LABELS[task.gtd_category]}</span>
                         {task.due_date && (
                           <span
