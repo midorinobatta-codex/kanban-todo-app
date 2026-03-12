@@ -43,7 +43,7 @@ type KanbanBoardProps = {
   loggingOut?: boolean;
 };
 
-type ViewMode = 'kanban' | 'matrix';
+type ViewMode = 'kanban' | 'matrix' | 'gtd';
 
 type MatrixQuadrantKey = 'important_urgent' | 'important_notUrgent' | 'notImportant_urgent' | 'notImportant_notUrgent';
 
@@ -56,6 +56,13 @@ const MATRIX_QUADRANTS: Array<{
   { key: 'important_notUrgent', title: '重要 × 非緊急', subtitle: '計画的に進める' },
   { key: 'notImportant_urgent', title: '非重要 × 緊急', subtitle: 'できれば委任' },
   { key: 'notImportant_notUrgent', title: '非重要 × 非緊急', subtitle: '後回し候補' }
+];
+
+const GTD_SECTIONS: Array<{ key: TaskGtdCategory; title: string }> = [
+  { key: 'next_action', title: '次にやる' },
+  { key: 'delegated', title: '他者依頼' },
+  { key: 'project', title: 'プロジェクト' },
+  { key: 'someday', title: 'いつか / 保留' }
 ];
 
 function isOverdue(dueDate: string | null) {
@@ -174,6 +181,21 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         important_notUrgent: [] as Task[],
         notImportant_urgent: [] as Task[],
         notImportant_notUrgent: [] as Task[]
+      }
+    );
+  }, [filteredTasks]);
+
+  const gtdTasks = useMemo(() => {
+    return filteredTasks.reduce(
+      (acc, task) => {
+        acc[task.gtd_category].push(task);
+        return acc;
+      },
+      {
+        next_action: [] as Task[],
+        delegated: [] as Task[],
+        project: [] as Task[],
+        someday: [] as Task[]
       }
     );
   }, [filteredTasks]);
@@ -346,6 +368,15 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
           >
             マトリクス表示
           </button>
+          <button
+            type="button"
+            onClick={() => setViewMode('gtd')}
+            className={`rounded px-3 py-1.5 text-sm ${
+              viewMode === 'gtd' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            GTD表示
+          </button>
         </div>
       </section>
 
@@ -449,7 +480,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                 </article>
               ))}
             </section>
-          ) : (
+          ) : viewMode === 'matrix' ? (
             <section className="grid gap-4 md:grid-cols-2">
               {MATRIX_QUADRANTS.map((quadrant) => (
                 <article key={quadrant.key} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
@@ -466,6 +497,28 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
                       />
                     ))}
                     {matrixTasks[quadrant.key].length === 0 && <p className="text-sm text-slate-400">タスクなし</p>}
+                  </div>
+                </article>
+              ))}
+            </section>
+          ) : (
+            <section className="grid gap-4 md:grid-cols-2">
+              {GTD_SECTIONS.map((section) => (
+                <article key={section.key} className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="mb-3 text-lg font-semibold">
+                    {section.title} <span className="text-sm text-slate-500">({gtdTasks[section.key].length})</span>
+                  </h2>
+                  <div className="space-y-3">
+                    {gtdTasks[section.key].map((task) => (
+                      <TaskCard
+                        key={task.id}
+                        task={task}
+                        disabled={updatingTaskId === task.id}
+                        onUpdateStatus={updateStatus}
+                        onDelete={deleteTask}
+                      />
+                    ))}
+                    {gtdTasks[section.key].length === 0 && <p className="text-sm text-slate-400">タスクなし</p>}
                   </div>
                 </article>
               ))}
