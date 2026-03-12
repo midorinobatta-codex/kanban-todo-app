@@ -90,6 +90,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
   const [importanceFilter, setImportanceFilter] = useState<'all' | TaskImportance>('all');
   const [urgencyFilter, setUrgencyFilter] = useState<'all' | TaskUrgency>('all');
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
+  const [showSomedayInNormalViews, setShowSomedayInNormalViews] = useState(false);
 
   const fetchTasks = useCallback(
     async (showRefreshing = false) => {
@@ -143,10 +144,18 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
     });
   }, [gtdFilter, importanceFilter, keyword, tasks, urgencyFilter]);
 
+  const visibleTasksForNormalViews = useMemo(() => {
+    if (showSomedayInNormalViews || gtdFilter === 'someday') {
+      return filteredTasks;
+    }
+
+    return filteredTasks.filter((task) => task.gtd_category !== 'someday');
+  }, [filteredTasks, gtdFilter, showSomedayInNormalViews]);
+
   const groupedTasks = useMemo(() => {
     return TASK_PROGRESS_ORDER.reduce(
       (acc, status) => {
-        acc[status] = filteredTasks.filter((task) => task.status === status);
+        acc[status] = visibleTasksForNormalViews.filter((task) => task.status === status);
         return acc;
       },
       {
@@ -156,10 +165,10 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         done: [] as Task[]
       }
     );
-  }, [filteredTasks]);
+  }, [visibleTasksForNormalViews]);
 
   const matrixTasks = useMemo(() => {
-    return filteredTasks.reduce(
+    return visibleTasksForNormalViews.reduce(
       (acc, task) => {
         const isImportantHigh = task.importance === 'high';
         const isUrgencyHigh = task.urgency === 'high';
@@ -183,7 +192,7 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
         notImportant_notUrgent: [] as Task[]
       }
     );
-  }, [filteredTasks]);
+  }, [visibleTasksForNormalViews]);
 
   const gtdTasks = useMemo(() => {
     return filteredTasks.reduce(
@@ -349,34 +358,47 @@ export function KanbanBoard({ userId, userEmail, onLogout, loggingOut = false }:
       </section>
 
       <section className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="inline-flex rounded-md border border-slate-300 bg-slate-100 p-1">
-          <button
-            type="button"
-            onClick={() => setViewMode('kanban')}
-            className={`rounded px-3 py-1.5 text-sm ${
-              viewMode === 'kanban' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            カンバン表示
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('matrix')}
-            className={`rounded px-3 py-1.5 text-sm ${
-              viewMode === 'matrix' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            マトリクス表示
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode('gtd')}
-            className={`rounded px-3 py-1.5 text-sm ${
-              viewMode === 'gtd' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
-            }`}
-          >
-            GTD表示
-          </button>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="inline-flex rounded-md border border-slate-300 bg-slate-100 p-1">
+            <button
+              type="button"
+              onClick={() => setViewMode('kanban')}
+              className={`rounded px-3 py-1.5 text-sm ${
+                viewMode === 'kanban' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              カンバン表示
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('matrix')}
+              className={`rounded px-3 py-1.5 text-sm ${
+                viewMode === 'matrix' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              マトリクス表示
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('gtd')}
+              className={`rounded px-3 py-1.5 text-sm ${
+                viewMode === 'gtd' ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              GTD表示
+            </button>
+          </div>
+          {viewMode !== 'gtd' && (
+            <label className="flex items-center gap-2 text-sm text-slate-600">
+              <input
+                type="checkbox"
+                checked={showSomedayInNormalViews}
+                onChange={(e) => setShowSomedayInNormalViews(e.target.checked)}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              保留も表示
+            </label>
+          )}
         </div>
       </section>
 
