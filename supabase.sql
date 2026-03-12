@@ -7,6 +7,8 @@ create table if not exists public.tasks (
   description text,
   assignee text,
   priority text not null default 'medium' check (priority in ('low', 'medium', 'high')),
+  importance text not null default 'medium' check (importance in ('low', 'medium', 'high')),
+  urgency text not null default 'medium' check (urgency in ('low', 'medium', 'high')),
   status text not null default 'todo',
   gtd_category text not null default 'next_action',
   due_date date,
@@ -16,10 +18,14 @@ create table if not exists public.tasks (
 
 alter table public.tasks add column if not exists user_id uuid references auth.users(id) on delete cascade;
 alter table public.tasks add column if not exists gtd_category text not null default 'next_action';
+alter table public.tasks add column if not exists importance text not null default 'medium';
+alter table public.tasks add column if not exists urgency text not null default 'medium';
 
 create index if not exists tasks_user_id_idx on public.tasks(user_id);
 create index if not exists tasks_status_created_at_idx on public.tasks(status, created_at desc);
 create index if not exists tasks_user_gtd_category_idx on public.tasks(user_id, gtd_category);
+create index if not exists tasks_user_importance_idx on public.tasks(user_id, importance);
+create index if not exists tasks_user_urgency_idx on public.tasks(user_id, urgency);
 
 create or replace function public.set_updated_at()
 returns trigger as $$
@@ -51,6 +57,8 @@ drop policy if exists "Allow delete for authenticated owner" on public.tasks;
 -- 旧 status 制約を先に外してから移行
 alter table public.tasks drop constraint if exists tasks_status_check;
 alter table public.tasks drop constraint if exists tasks_gtd_category_check;
+alter table public.tasks drop constraint if exists tasks_importance_check;
+alter table public.tasks drop constraint if exists tasks_urgency_check;
 
 update public.tasks
 set status = 'doing'
@@ -71,6 +79,26 @@ alter table public.tasks alter column gtd_category set default 'next_action';
 alter table public.tasks
 add constraint tasks_gtd_category_check
 check (gtd_category in ('next_action', 'delegated', 'project', 'someday'));
+
+update public.tasks
+set importance = 'medium'
+where importance is null;
+
+alter table public.tasks alter column importance set default 'medium';
+
+alter table public.tasks
+add constraint tasks_importance_check
+check (importance in ('low', 'medium', 'high'));
+
+update public.tasks
+set urgency = 'medium'
+where urgency is null;
+
+alter table public.tasks alter column urgency set default 'medium';
+
+alter table public.tasks
+add constraint tasks_urgency_check
+check (urgency in ('low', 'medium', 'high'));
 
 -- owner-based RLS
 create policy "Allow read for authenticated owner" on public.tasks

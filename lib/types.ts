@@ -1,4 +1,3 @@
-
 export const TASK_PROGRESS_VALUES = ["todo", "doing", "waiting", "done"] as const;
 export type TaskProgress = (typeof TASK_PROGRESS_VALUES)[number];
 
@@ -15,6 +14,24 @@ export const TASK_PRIORITY_VALUES = ["low", "medium", "high"] as const;
 export type TaskPriority = (typeof TASK_PRIORITY_VALUES)[number];
 
 export const PRIORITY_LABELS: Record<TaskPriority, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+};
+
+export const TASK_IMPORTANCE_VALUES = ["low", "medium", "high"] as const;
+export type TaskImportance = (typeof TASK_IMPORTANCE_VALUES)[number];
+
+export const IMPORTANCE_LABELS: Record<TaskImportance, string> = {
+  low: "低",
+  medium: "中",
+  high: "高",
+};
+
+export const TASK_URGENCY_VALUES = ["low", "medium", "high"] as const;
+export type TaskUrgency = (typeof TASK_URGENCY_VALUES)[number];
+
+export const URGENCY_LABELS: Record<TaskUrgency, string> = {
   low: "低",
   medium: "中",
   high: "高",
@@ -37,6 +54,8 @@ export type Task = {
   description: string | null;
   assignee: string | null;
   priority: TaskPriority;
+  importance: TaskImportance;
+  urgency: TaskUrgency;
   status: TaskProgress;
   gtd_category: TaskGtdCategory;
   due_date: string | null;
