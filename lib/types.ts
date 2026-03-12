@@ -1,3 +1,4 @@
+
 export const TASK_PROGRESS_VALUES = ["todo", "doing", "waiting", "done"] as const;
 export type TaskProgress = (typeof TASK_PROGRESS_VALUES)[number];
 
@@ -19,6 +20,16 @@ export const PRIORITY_LABELS: Record<TaskPriority, string> = {
   high: "高",
 };
 
+export const TASK_GTD_VALUES = ["next_action", "delegated", "project", "someday"] as const;
+export type TaskGtdCategory = (typeof TASK_GTD_VALUES)[number];
+
+export const TASK_GTD_LABELS: Record<TaskGtdCategory, string> = {
+  next_action: "次にやる",
+  delegated: "他者依頼",
+  project: "プロジェクト",
+  someday: "いつか / 保留",
+};
+
 export type Task = {
   id: string;
   user_id: string;
@@ -27,6 +38,7 @@ export type Task = {
   assignee: string | null;
   priority: TaskPriority;
   status: TaskProgress;
+  gtd_category: TaskGtdCategory;
   due_date: string | null;
   created_at: string;
   updated_at: string;
