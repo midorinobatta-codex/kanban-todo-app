@@ -1,0 +1,34 @@
+import type { MetadataRoute } from 'next';
+
+export default function manifest(): MetadataRoute.Manifest {
+  return {
+    name: 'FlowFocus',
+    short_name: 'FlowFocus',
+    description: '今日やるべきことと止まり案件を見つけやすくした、業務向け GTD / Project 管理アプリ',
+    start_url: '/',
+    scope: '/',
+    display: 'standalone',
+    orientation: 'portrait-primary',
+    background_color: '#eff6ff',
+    theme_color: '#1d4ed8',
+    lang: 'ja',
+    icons: [
+      {
+        src: '/icons/icon-192.png',
+        sizes: '192x192',
+        type: 'image/png'
+      },
+      {
+        src: '/icons/icon-512.png',
+        sizes: '512x512',
+        type: 'image/png'
+      },
+      {
+        src: '/icons/maskable-512.png',
+        sizes: '512x512',
+        type: 'image/png',
+        purpose: 'maskable'
+      }
+    ]
+  };
+}

@@ -13,6 +13,7 @@ create table if not exists public.tasks (
   gtd_category text not null default 'next_action',
   project_task_id uuid,
   due_date date,
+  started_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -22,6 +23,7 @@ alter table public.tasks alter column user_id set default auth.uid();
 alter table public.tasks add column if not exists gtd_category text not null default 'next_action';
 alter table public.tasks add column if not exists importance text not null default 'medium';
 alter table public.tasks add column if not exists urgency text not null default 'medium';
+alter table public.tasks add column if not exists started_at timestamptz;
 
 alter table public.tasks add column if not exists project_task_id uuid;
 
