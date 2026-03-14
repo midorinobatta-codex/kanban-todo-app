@@ -1,3 +1,4 @@
+
 export const TASK_PROGRESS_VALUES = ["todo", "doing", "waiting", "done"] as const;
 export type TaskProgress = (typeof TASK_PROGRESS_VALUES)[number];
 
@@ -60,6 +61,8 @@ export type Task = {
   gtd_category: TaskGtdCategory;
   project_task_id: string | null;
   due_date: string | null;
+  waiting_response_date: string | null;
+  started_at: string | null;
   created_at: string;
   updated_at: string;
 };

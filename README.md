@@ -1,93 +1,119 @@
-# 業務Todoカンバン MVP
+# FlowFocus
 
-Next.js + TypeScript + Tailwind + Supabase で構築した、業務利用向けのシンプルな Todo カンバンです。
+FlowFocus は、Next.js + TypeScript + Tailwind CSS + Supabase で構成した、GTD と project / next_action 運用を前提にした業務 Todo カンバンです。
 
-## 主な機能
+## この版で強化したポイント
 
-- Supabase Auth によるログイン / ログアウト
-- 未ログイン時の `/login` へのリダイレクト
-- タスクの作成（タイトル、説明、担当者、重要度、緊急度、期限、GTD分類）
-- 表示モード
-  - カンバン表示（未着手 / 進行中 / 待ち / 完了）
-  - マトリクス表示（重要度 × 緊急度）
-  - GTD表示（次にやる / 他者依頼 / プロジェクト / いつか / 保留）
-- GTDの `someday` は通常画面（カンバン/マトリクス）では初期非表示
-  - トグルで必要時のみ表示可能
-  - GTD表示では常に表示
-- project と next_action の軽量連携
-  - next_action に関連プロジェクト設定
-  - project 側に次アクション件数表示
-  - next_action 未設定プロジェクトの warning 表示
-- タスクステータスの更新
-- タスク削除
-- 画面からの手動再読込
-- キーワード検索、GTD分類フィルタ、重要度フィルタ、緊急度フィルタ
-- Supabase(PostgreSQL) への永続化
-
-## 現在の運用軸と補足
-
-- 現在の主な運用軸は **GTD / 重要度 / 緊急度 / ステータス** です。
-- `priority` カラムは **DB / 型には互換のため残存** していますが、**UIでは表示していません**。
-
-## セットアップ
-
-1. 依存関係をインストール
-
-```bash
-npm install
-環境変数を作成
-
-cp .env.example .env.local
-.env.local に Supabase プロジェクト値を設定してください。
-
-Supabase にテーブル作成
-
-supabase.sql を Supabase SQL Editor で実行します。
-
-Supabase Auth でユーザーを作成
-
-Supabase ダッシュボードの Authentication からメールアドレス / パスワードのユーザーを作成してください。
-
-開発サーバー起動
-
-npm run dev
-ブラウザで http://localhost:3000 を開いて確認します。
-
-補足
-この MVP はクライアントサイドから Supabase を直接操作します。
-
-supabase.sql の RLS ポリシーは authenticated ユーザーのみ CRUD 可能です。
-
-タスクは user_id でログインユーザーごとに分離されています。
+## PWA 対応
+- `app/manifest.ts` による Web App Manifest を追加
+- `public/sw.js` による最小 service worker を追加
+- 右下の `インストール` 導線から、デスクトップやホーム画面へ追加可能
+- iPhone / iPad は Safari の `ホーム画面に追加` を利用
 
 
----
+### 1. 今日やるべきことが 3 秒で分かる
+- Board の「今日」を `今やる1件 + 次にやる2件` に整理
+- Project Detail / Projects / Viewer も同じ考え方で、最初に見る 1 件を先頭表示
+- 回答予定日超過、期限超過、今日期限、待ち日付未設定、進行停滞を優先して先頭表示
 
-## 3) 主要変更点の要約
+### 2. 止まっている案件が自然に見つかる
+- Board / Project Detail / Projects / Viewer に `止まり案件` を追加
+- 件数だけでなく、理由付きカードで止まり方を見分けやすくした
+- 停滞判定は共通ユーティリティに集約
+  - 回答予定日超過
+  - waiting だが回答予定日未設定
+  - doing のまま 3 日以上更新なし
+  - due_date 超過
+  - project の次アクション未設定
 
-- `deleteTask()` で削除対象を事前に取得し、削除成功後「project削除時のみ」`project_task_id === 削除ID` の next_action をローカル state 上で `null` 化するようにしました（削除直後の画面整合を改善）。
-- README を現仕様へ更新し、priority が UI 非表示であること、運用軸（GTD/重要度/緊急度/ステータス）、3表示モード、someday の通常画面初期非表示、project-next_action 軽量連携を明記しました。
+### 3. 件数が増えても画面が重くなりにくい
+- 検索は `useDeferredValue` を継続利用
+- Board / Projects / Project Detail / Viewer で表示件数を段階描画
+- 長い列や一覧は初期件数だけ描画し、`さらに N 件` で追加描画
+- 集計・停滞判定・優先順位判定は共通関数へ寄せて再利用
 
----
+### 4. 入力することで仕事が増えないようにする
+- `待ち＋日付` の 1 クリックで waiting と回答予定日を同時設定
+- 一括操作でも回答予定日が未入力なら次営業日を自動提案
+- 次営業日 / 3営業日のプリセットで日付入力を最小化
+- `今やる1件 + 次にやる2件` と `止まり案件` は既存データから自動計算し、追加入力を要求しない
 
-## 4) 手元確認手順
+## 主な画面機能
 
-1. `project` タスクを作成。  
-2. `next_action` タスクを作成し、関連 project を設定。  
-3. `project` タスクを削除。  
-4. **削除直後**に、紐づいていた `next_action` の関連 project が未設定表示へ変わることを確認（再読込前でも整合）。  
-5. README の記載が現仕様に一致していることを確認。
+### Board
+- カンバン / 今日 / マトリクス / GTD 表示
+- D&D による status 更新
+- 複数選択と一括操作
+- waiting 管理（回答予定日設定・超過・未設定可視化）
+- 今やる1件 + 次にやる2件 / 止まり案件 / クイック選択
 
----
+### Projects
+- project 一覧、検索、並び替え、クイック絞り込み
+- まず見る1件 + 次に見る2件
+- 開始日未記録 / 期限未設定 / 次アクション未設定の確認
+- 段階描画による一覧軽量化
 
-## Screenshot
+### Project Detail
+- project 情報編集
+- linked next_action の追加
+- 複数選択 / 一括操作
+- Project 内の今やる1件 + 次にやる2件 / 止まり候補
+- 列ごとの段階描画
 
-![updated-board](browser:/tmp/codex_browser_invocations/018945d12424463a/artifacts/artifacts/kanban-after-fix.png)
+### Viewer
+- started_at ～ due_date のガントチャート
+- 今日線
+- まず見る1件 + 次に見る2件 / 止まり案件
+- 段階描画によるガント行の軽量化
+- 開始日未記録 / 期限未設定一覧
 
----
+### 共通
+- 通知 / 警告ストリップ
+- ローカル履歴
+- CSV / JSON エクスポート
+- CSV は UTF-8 BOM 付きで Excel の文字化けを抑制
 
-## Testing
+## 設計ルール
+- `status` は進捗専用
+- `gtd_category` は分類専用
+- `project` も `tasks` の 1 レコード
+- `started_at` は初回 doing 移行日時
+- `waiting_response_date` は `status = waiting` のときだけ使用
+- waiting 以外へ変わったら `waiting_response_date` はクリア
+- Board / Matrix は `gtd_category = project` を表示しない
+- Board / Project Detail のカードは全体クリックで編集モーダル
+- 日付表示は `yyyy-m-d`
 
-- ✅ `npx tsc --noEmit`
-- ✅ `npm run build`
-- ✅ `npm run dev`（起動確認およびスクリーンショット取得）
+## 今回追加・更新した主なファイル
+- `components/kanban-board.tsx`
+- `app/projects/page.tsx`
+- `app/projects/[id]/page.tsx`
+- `app/projects/viewer/page.tsx`
+- `lib/tasks/focus.ts`
+- `lib/tasks/presentation.ts`
+- `components/ui/alert-strip.tsx`
+- `components/ui/export-actions.tsx`
+- `components/ui/history-panel.tsx`
+- `lib/tasks/export.ts`
+- `lib/tasks/history.ts`
+- `docs/operations.md`
+
+## 補足
+- 今回の追加は UI / localStorage ベースで、SQL 変更はありません。
+- 履歴は端末ローカル保存のため、ブラウザを変えると引き継がれません。
+- 停滞判定の厳しさを変えたい場合は `lib/tasks/focus.ts` の `isDoingStale` を調整してください。
+
+
+## デザイン調整方針
+- 最上段は判断専用バーとして、画面名・件数・主操作だけを残す
+- 「今やる1件」は最も目立つカードにして、次点候補と見た目を分ける
+- 色の役割は固定する（赤=危険、黄=注意、青=現在地/主操作、灰=補足、緑=完了）
+- カード内の情報順は タイトル → 理由タグ → 日付 → Project → 担当に寄せる
+- 履歴・通知/警告・補助一覧などの二次情報は折りたたみ前提にする
+
+
+## 最終デザイン磨き込み
+- 主役 / 準主役 / 脇役 の強弱を整理
+- タグは状態・理由・属性の3系統に寄せて表示を簡素化
+- 止まり案件は危険順で先頭に出る前提
+- 履歴や補助一覧は折りたたみを基本にして一覧の集中を維持
