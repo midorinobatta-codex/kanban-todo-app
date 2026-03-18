@@ -1,4 +1,3 @@
-
 export const TASK_PROGRESS_VALUES = ["todo", "doing", "waiting", "done"] as const;
 export type TaskProgress = (typeof TASK_PROGRESS_VALUES)[number];
 
@@ -48,6 +47,9 @@ export const TASK_GTD_LABELS: Record<TaskGtdCategory, string> = {
   someday: "いつか / 保留",
 };
 
+export const WORK_SESSION_ENTRY_TYPES = ["timer", "manual_adjustment"] as const;
+export type WorkSessionEntryType = (typeof WORK_SESSION_ENTRY_TYPES)[number];
+
 export type Task = {
   id: string;
   user_id: string;
@@ -63,6 +65,22 @@ export type Task = {
   due_date: string | null;
   waiting_response_date: string | null;
   started_at: string | null;
+  tracked_minutes: number;
+  manual_adjustment_minutes: number;
+  session_started_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WorkSessionEntry = {
+  id: string;
+  user_id: string;
+  task_id: string;
+  entry_type: WorkSessionEntryType;
+  started_at: string;
+  ended_at: string | null;
+  duration_minutes: number;
+  note: string | null;
   created_at: string;
   updated_at: string;
 };

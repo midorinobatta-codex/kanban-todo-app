@@ -4,6 +4,7 @@ import type { Project } from '@/lib/domain/project';
 import type { Task } from '@/lib/types';
 import { formatDate, formatProjectDisplayName } from '@/lib/tasks/presentation';
 import type { TaskHistoryEntry } from '@/lib/tasks/history';
+import { formatMinutesAsHours, type WeeklyReviewResult } from '@/lib/tasks/weekly-review';
 
 function escapeCsvValue(value: unknown) {
   const text = value == null ? '' : String(value);
@@ -66,7 +67,9 @@ export function buildTaskExportRows(tasks: Task[], projectTaskMap?: Record<strin
     dueDate: formatDate(task.due_date, ''),
     startedAt: formatDate(task.started_at, ''),
     waitingResponseDate: formatDate(task.waiting_response_date, ''),
-    relatedProject: task.project_task_id ? formatProjectDisplayName(projectTaskMap?.[task.project_task_id]?.title ?? task.project_task_id) : '',
+    relatedProject: task.project_task_id
+      ? formatProjectDisplayName(projectTaskMap?.[task.project_task_id]?.title ?? task.project_task_id)
+      : '',
     createdAt: task.created_at,
     updatedAt: task.updated_at,
   }));
@@ -98,4 +101,114 @@ export function buildHistoryRows(entries: TaskHistoryEntry[]) {
     detail: entry.detail ?? '',
     contextId: entry.contextId ?? '',
   }));
+}
+
+export function buildWeeklyReviewExportRows(review: WeeklyReviewResult, memo: string) {
+  const normalizedMemo = memo.trim();
+
+  return [
+    {
+      section: 'summary',
+      rank: '',
+      label: '週の合計作業時間',
+      value: formatMinutesAsHours(review.totalMinutes),
+      minutes: review.totalMinutes,
+      count: '',
+      relatedId: '',
+      weekStart: review.weekStart,
+      weekEnd: review.weekEnd,
+      memo: normalizedMemo,
+    },
+    {
+      section: 'summary',
+      rank: '',
+      label: '週内の完了件数',
+      value: `${review.completedCount}件`,
+      minutes: '',
+      count: review.completedCount,
+      relatedId: '',
+      weekStart: review.weekStart,
+      weekEnd: review.weekEnd,
+      memo: normalizedMemo,
+    },
+    {
+      section: 'summary',
+      rank: '',
+      label: '作業セッション件数',
+      value: `${review.sessionCount}件`,
+      minutes: '',
+      count: review.sessionCount,
+      relatedId: '',
+      weekStart: review.weekStart,
+      weekEnd: review.weekEnd,
+      memo: normalizedMemo,
+    },
+    {
+      section: 'summary',
+      rank: '',
+      label: '補正入力件数',
+      value: `${review.adjustmentCount}件`,
+      minutes: '',
+      count: review.adjustmentCount,
+      relatedId: '',
+      weekStart: review.weekStart,
+      weekEnd: review.weekEnd,
+      memo: normalizedMemo,
+    },
+    ...review.taskTopItems.map((item, index) => ({
+      section: 'task_top',
+      rank: index + 1,
+      label: item.title,
+      value: formatMinutesAsHours(item.minutes),
+      minutes: item.minutes,
+      count: item.sessionCount,
+      relatedId: item.id,
+      weekStart: review.weekStart,
+      weekEnd: review.weekEnd,
+      memo: normalizedMemo,
+    })),
+    ...review.projectTopItems.map((item, index) => ({
+      section: 'project_top',
+      rank: index + 1,
+      label: item.title,
+      value: formatMinutesAsHours(item.minutes),
+      minutes: item.minutes,
+      count: item.sessionCount,
+      relatedId: item.id,
+      weekStart: review.weekStart,
+      weekEnd: review.weekEnd,
+      memo: normalizedMemo,
+    })),
+    ...review.stallTrends.map((item) => ({
+      section: 'stall_trend',
+      rank: '',
+      label: item.label,
+      value: item.detail,
+      minutes: '',
+      count: item.count,
+      relatedId: item.key,
+      weekStart: review.weekStart,
+      weekEnd: review.weekEnd,
+      memo: normalizedMemo,
+    })),
+  ];
+}
+
+export function buildWeeklyReviewJsonPayload(review: WeeklyReviewResult, memo: string) {
+  return {
+    weekStart: review.weekStart,
+    weekEnd: review.weekEnd,
+    weekLabel: review.weekLabel,
+    summary: {
+      totalMinutes: review.totalMinutes,
+      totalTimeText: formatMinutesAsHours(review.totalMinutes),
+      completedCount: review.completedCount,
+      sessionCount: review.sessionCount,
+      adjustmentCount: review.adjustmentCount,
+    },
+    taskTopItems: review.taskTopItems,
+    projectTopItems: review.projectTopItems,
+    stallTrends: review.stallTrends,
+    memo,
+  };
 }

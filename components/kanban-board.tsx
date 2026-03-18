@@ -30,6 +30,7 @@ import {
   type TaskPriority,
   type TaskProgress,
   type TaskUrgency,
+  type WorkSessionEntry,
 } from '@/lib/types';
 import { useProjects } from '@/lib/hooks/use-projects';
 import { TaskEditModal, type TaskEditValues } from '@/components/task-edit-modal';
@@ -51,8 +52,20 @@ import {
 import { buildHistoryRows, buildTaskExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildStalledTaskList, buildTaskFocusDeck, buildTaskStalledBuckets, isDoingStale } from '@/lib/tasks/focus';
+import {
+  buildDailyReviewExportRows,
+  buildTaskTimeExportRows,
+  diffMinutes,
+  formatMinutesTotal,
+  getEffectiveTaskMinutes,
+  getLocalDateKey,
+  summarizeDailyReview,
+  type DailyReviewSummary,
+} from '@/lib/tasks/time-tracking';
 
 const BOARD_PREFERENCES_KEY = 'kanban-board-preferences-v1';
+const DAILY_REVIEW_NOTE_KEY_PREFIX = 'flowfocus-daily-review-note-';
+const WEEKLY_REVIEW_NOTE_KEY_PREFIX = 'flowfocus-weekly-review-note-';
 
 const defaultNewTaskState = {
   title: '',
@@ -257,6 +270,341 @@ function isValidUrgencyFilter(value: unknown): value is 'all' | TaskUrgency {
   return value === 'all' || TASK_URGENCY_VALUES.includes(value as TaskUrgency);
 }
 
+
+type WeeklyReviewTopSummary = {
+  id: string;
+  title: string;
+  totalMinutes: number;
+  sessionCount: number;
+};
+
+type WeeklyReviewTrendSummary = {
+  key: 'waitingOverdue' | 'waitingNoDate' | 'doingStale' | 'overdueTodo';
+  label: string;
+  count: number;
+  detail: string;
+};
+
+type WeeklyReviewSummary = {
+  weekStart: string;
+  weekEnd: string;
+  weekLabel: string;
+  totalMinutes: number;
+  completedCount: number;
+  sessionCount: number;
+  adjustmentCount: number;
+  taskSummaries: WeeklyReviewTopSummary[];
+  projectSummaries: WeeklyReviewTopSummary[];
+  stallTrends: WeeklyReviewTrendSummary[];
+};
+
+function getWeekWindow(referenceDate: Date) {
+  const base = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+  const diffFromMonday = (base.getDay() + 6) % 7;
+  const weekStartDate = new Date(base);
+  weekStartDate.setDate(base.getDate() - diffFromMonday);
+
+  const weekEndDate = new Date(weekStartDate);
+  weekEndDate.setDate(weekStartDate.getDate() + 6);
+
+  const weekStart = getLocalDateKey(weekStartDate);
+  const weekEnd = getLocalDateKey(weekEndDate);
+
+  return {
+    weekStartDate,
+    weekEndDate,
+    weekStart,
+    weekEnd,
+    weekLabel: `${formatDate(weekStart)} 〜 ${formatDate(weekEnd)}`,
+  };
+}
+
+function getIsoDateKey(value: string | null | undefined) {
+  if (!value) return null;
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return getLocalDateKey(parsed);
+}
+
+function isDateKeyWithinRange(value: string | null | undefined, start: string, end: string) {
+  if (!value) return false;
+  return value >= start && value <= end;
+}
+
+function formatWeeklyReviewMinutes(minutes: number) {
+  return formatMinutesTotal(minutes);
+}
+
+function sortWeeklyReviewSummaries(items: WeeklyReviewTopSummary[], limit = 5) {
+  return [...items]
+    .sort((left, right) => {
+      if (right.totalMinutes !== left.totalMinutes) {
+        return right.totalMinutes - left.totalMinutes;
+      }
+      if (right.sessionCount !== left.sessionCount) {
+        return right.sessionCount - left.sessionCount;
+      }
+      return left.title.localeCompare(right.title, 'ja');
+    })
+    .slice(0, limit);
+}
+
+function buildWeeklyReviewSummary(
+  tasks: Task[],
+  workSessions: WorkSessionEntry[],
+  weekStart: string,
+  weekEnd: string,
+  projectTaskMap: Record<string, Task>,
+): WeeklyReviewSummary {
+  const taskMap = tasks.reduce(
+    (acc, task) => {
+      acc[task.id] = task;
+      return acc;
+    },
+    {} as Record<string, Task>,
+  );
+
+  const weeklyEntries = workSessions.filter((entry) => {
+    const dateKey = getIsoDateKey(entry.started_at ?? entry.ended_at);
+    return isDateKeyWithinRange(dateKey, weekStart, weekEnd);
+  });
+
+  const timerEntries = weeklyEntries.filter((entry) => entry.entry_type === 'timer');
+  const adjustmentEntries = weeklyEntries.filter((entry) => entry.entry_type === 'manual_adjustment');
+
+  const totalMinutes = weeklyEntries.reduce((sum, entry) => sum + (entry.duration_minutes ?? 0), 0);
+  const completedCount = tasks.filter(
+    (task) =>
+      task.status === 'done' &&
+      isDateKeyWithinRange(getIsoDateKey(task.updated_at), weekStart, weekEnd),
+  ).length;
+
+  const summarizeEntries = (
+    resolver: (entry: WorkSessionEntry) => { id: string; title: string },
+  ) => {
+    const summaryMap = new Map<string, WeeklyReviewTopSummary>();
+
+    weeklyEntries.forEach((entry) => {
+      const minutes = entry.duration_minutes ?? 0;
+      if (minutes === 0) return;
+
+      const resolved = resolver(entry);
+      const current = summaryMap.get(resolved.id) ?? {
+        id: resolved.id,
+        title: resolved.title,
+        totalMinutes: 0,
+        sessionCount: 0,
+      };
+
+      current.totalMinutes += minutes;
+      if (entry.entry_type === 'timer') {
+        current.sessionCount += 1;
+      }
+
+      summaryMap.set(resolved.id, current);
+    });
+
+    return sortWeeklyReviewSummaries(Array.from(summaryMap.values()));
+  };
+
+  const taskSummaries = summarizeEntries((entry) => {
+    const task = entry.task_id ? taskMap[entry.task_id] : null;
+
+    if (!task) {
+      return { id: entry.task_id ?? 'unassigned-task', title: '未紐付けタスク' };
+    }
+
+    return { id: task.id, title: task.title };
+  });
+
+  const projectSummaries = summarizeEntries((entry) => {
+    const task = entry.task_id ? taskMap[entry.task_id] : null;
+
+    if (!task) {
+      return { id: 'unassigned-project', title: '関連project未設定' };
+    }
+
+    if (task.gtd_category === 'project') {
+      return { id: task.id, title: task.title };
+    }
+
+    if (task.project_task_id && projectTaskMap[task.project_task_id]) {
+      return { id: task.project_task_id, title: projectTaskMap[task.project_task_id].title };
+    }
+
+    return { id: 'unassigned-project', title: '関連project未設定' };
+  });
+
+  const touchedTaskIds = new Set(weeklyEntries.map((entry) => entry.task_id).filter(Boolean) as string[]);
+  const weeklyRelevantTasks = tasks.filter((task) => {
+    if (task.gtd_category === 'project') return false;
+
+    return (
+      touchedTaskIds.has(task.id) ||
+      isDateKeyWithinRange(getIsoDateKey(task.updated_at), weekStart, weekEnd) ||
+      isDateKeyWithinRange(getIsoDateKey(task.created_at), weekStart, weekEnd)
+    );
+  });
+
+  const stalledBuckets = buildTaskStalledBuckets(weeklyRelevantTasks);
+  const stallTrendBase: WeeklyReviewTrendSummary[] = [
+  {
+    key: 'waitingOverdue',
+    label: '回答予定日超過',
+    count: stalledBuckets.waitingOverdue.length,
+    detail: '待ちの再確認や催促が必要',
+  },
+  {
+    key: 'waitingNoDate',
+    label: '待ち日付未設定',
+    count: stalledBuckets.waitingNoDate.length,
+    detail: '回答予定日を入れて抜け漏れ防止',
+  },
+  {
+    key: 'doingStale',
+    label: '進行停滞',
+    count: stalledBuckets.doingStale.length,
+    detail: '進行中だが更新が止まり気味',
+  },
+  {
+    key: 'overdueTodo',
+    label: '期限超過',
+    count: stalledBuckets.overdueTodo.length,
+    detail: 'todo / doing のまま期限を超過',
+  },
+];
+
+const stallTrends = [...stallTrendBase].sort((left, right) => {
+  if (right.count !== left.count) return right.count - left.count;
+  return left.label.localeCompare(right.label, 'ja');
+});
+
+  return {
+    weekStart,
+    weekEnd,
+    weekLabel: `${formatDate(weekStart)} 〜 ${formatDate(weekEnd)}`,
+    totalMinutes,
+    completedCount,
+    sessionCount: timerEntries.length,
+    adjustmentCount: adjustmentEntries.length,
+    taskSummaries,
+    projectSummaries,
+    stallTrends,
+  };
+}
+
+function buildWeeklyReviewExportRows(summary: WeeklyReviewSummary, note: string) {
+  const normalizedNote = note.trim();
+
+  return [
+    {
+      section: 'summary',
+      rank: '',
+      label: '週の合計作業時間',
+      value: formatWeeklyReviewMinutes(summary.totalMinutes),
+      minutes: summary.totalMinutes,
+      count: '',
+      relatedId: '',
+      weekStart: summary.weekStart,
+      weekEnd: summary.weekEnd,
+      memo: normalizedNote,
+    },
+    {
+      section: 'summary',
+      rank: '',
+      label: '週内の完了件数',
+      value: `${summary.completedCount}件`,
+      minutes: '',
+      count: summary.completedCount,
+      relatedId: '',
+      weekStart: summary.weekStart,
+      weekEnd: summary.weekEnd,
+      memo: normalizedNote,
+    },
+    {
+      section: 'summary',
+      rank: '',
+      label: '作業セッション件数',
+      value: `${summary.sessionCount}件`,
+      minutes: '',
+      count: summary.sessionCount,
+      relatedId: '',
+      weekStart: summary.weekStart,
+      weekEnd: summary.weekEnd,
+      memo: normalizedNote,
+    },
+    {
+      section: 'summary',
+      rank: '',
+      label: '補正入力件数',
+      value: `${summary.adjustmentCount}件`,
+      minutes: '',
+      count: summary.adjustmentCount,
+      relatedId: '',
+      weekStart: summary.weekStart,
+      weekEnd: summary.weekEnd,
+      memo: normalizedNote,
+    },
+    ...summary.taskSummaries.map((item, index) => ({
+      section: 'task_top',
+      rank: index + 1,
+      label: item.title,
+      value: formatWeeklyReviewMinutes(item.totalMinutes),
+      minutes: item.totalMinutes,
+      count: item.sessionCount,
+      relatedId: item.id,
+      weekStart: summary.weekStart,
+      weekEnd: summary.weekEnd,
+      memo: normalizedNote,
+    })),
+    ...summary.projectSummaries.map((item, index) => ({
+      section: 'project_top',
+      rank: index + 1,
+      label: item.title,
+      value: formatWeeklyReviewMinutes(item.totalMinutes),
+      minutes: item.totalMinutes,
+      count: item.sessionCount,
+      relatedId: item.id,
+      weekStart: summary.weekStart,
+      weekEnd: summary.weekEnd,
+      memo: normalizedNote,
+    })),
+    ...summary.stallTrends.map((item) => ({
+      section: 'stall_trend',
+      rank: '',
+      label: item.label,
+      value: item.detail,
+      minutes: '',
+      count: item.count,
+      relatedId: item.key,
+      weekStart: summary.weekStart,
+      weekEnd: summary.weekEnd,
+      memo: normalizedNote,
+    })),
+  ];
+}
+
+function buildWeeklyReviewJsonPayload(summary: WeeklyReviewSummary, note: string) {
+  return {
+    weekStart: summary.weekStart,
+    weekEnd: summary.weekEnd,
+    weekLabel: summary.weekLabel,
+    summary: {
+      totalMinutes: summary.totalMinutes,
+      totalMinutesLabel: formatWeeklyReviewMinutes(summary.totalMinutes),
+      completedCount: summary.completedCount,
+      sessionCount: summary.sessionCount,
+      adjustmentCount: summary.adjustmentCount,
+    },
+    taskSummaries: summary.taskSummaries,
+    projectSummaries: summary.projectSummaries,
+    stallTrends: summary.stallTrends,
+    memo: note,
+  };
+}
+
 export function KanbanBoard({
   userId,
   userEmail,
@@ -264,6 +612,7 @@ export function KanbanBoard({
   loggingOut = false,
 }: KanbanBoardProps) {
   const [tasks, setTasks] = useState<Task[]>([]);
+  const [workSessions, setWorkSessions] = useState<WorkSessionEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -271,6 +620,12 @@ export function KanbanBoard({
   const [saving, setSaving] = useState(false);
   const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [adjustingTask, setAdjustingTask] = useState<Task | null>(null);
+  const [adjustmentMinutesInput, setAdjustmentMinutesInput] = useState('');
+  const [adjustmentNote, setAdjustmentNote] = useState('');
+  const [dailyReviewNote, setDailyReviewNote] = useState('');
+  const [weeklyReviewNote, setWeeklyReviewNote] = useState('');
+  const [clockNow, setClockNow] = useState(() => Date.now());
   const [draggedTaskId, setDraggedTaskId] = useState<string | null>(null);
   const [dragOverStatus, setDragOverStatus] = useState<TaskProgress | null>(null);
 
@@ -294,6 +649,68 @@ export function KanbanBoard({
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
   const { projects } = useProjects();
+
+  const todayKey = useMemo(() => getLocalDateKey(new Date(clockNow)), [clockNow]);
+  const weekWindow = useMemo(() => getWeekWindow(new Date(clockNow)), [clockNow]);
+
+  const activeSessionTask = useMemo(
+    () => tasks.find((task) => Boolean(task.session_started_at)) ?? null,
+    [tasks],
+  );
+
+  const activeSessionElapsedLabel = useMemo(() => {
+    if (!activeSessionTask?.session_started_at) return null;
+    return formatMinutesTotal(diffMinutes(activeSessionTask.session_started_at, new Date(clockNow).toISOString()));
+  }, [activeSessionTask, clockNow]);
+
+  useEffect(() => {
+    if (!activeSessionTask) return;
+
+    const timerId = window.setInterval(() => {
+      setClockNow(Date.now());
+    }, 15000);
+
+    return () => window.clearInterval(timerId);
+  }, [activeSessionTask]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(`${DAILY_REVIEW_NOTE_KEY_PREFIX}${todayKey}`);
+      setDailyReviewNote(raw ?? '');
+    } catch {
+      setDailyReviewNote('');
+    }
+  }, [todayKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(`${DAILY_REVIEW_NOTE_KEY_PREFIX}${todayKey}`, dailyReviewNote);
+    } catch {
+      // noop
+    }
+  }, [dailyReviewNote, todayKey]);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(`${WEEKLY_REVIEW_NOTE_KEY_PREFIX}${weekWindow.weekStart}`);
+      setWeeklyReviewNote(raw ?? '');
+    } catch {
+      setWeeklyReviewNote('');
+    }
+  }, [weekWindow.weekStart]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(`${WEEKLY_REVIEW_NOTE_KEY_PREFIX}${weekWindow.weekStart}`, weeklyReviewNote);
+    } catch {
+      // noop
+    }
+  }, [weekWindow.weekStart, weeklyReviewNote]);
+
+  useEffect(() => {
+    setAdjustmentMinutesInput('');
+    setAdjustmentNote('');
+  }, [adjustingTask?.id]);
 
   useEffect(() => {
     try {
@@ -405,9 +822,26 @@ export function KanbanBoard({
     [userId],
   );
 
+  const fetchWorkSessions = useCallback(async () => {
+    const { data, error: fetchError } = await getSupabaseClient()
+      .from('task_work_sessions')
+      .select('*')
+      .eq('user_id', userId)
+      .order('started_at', { ascending: false })
+      .limit(1000);
+
+    if (fetchError) {
+      setError(fetchError.message);
+      return;
+    }
+
+    setWorkSessions((data as WorkSessionEntry[]) ?? []);
+  }, [userId]);
+
   useEffect(() => {
     void fetchTasks();
-  }, [fetchTasks]);
+    void fetchWorkSessions();
+  }, [fetchTasks, fetchWorkSessions]);
 
   useEffect(() => {
     if (projectFilterId === 'all') return;
@@ -631,9 +1065,29 @@ export function KanbanBoard({
 
   const boardHistoryEntries = useMemo(() => historyEntries, [historyEntries]);
 
+  const dailyReviewSummary = useMemo(() => {
+    return summarizeDailyReview(tasks, workSessions, todayKey, projectTaskMap);
+  }, [projectTaskMap, tasks, todayKey, workSessions]);
+
+  const weeklyReviewSummary = useMemo(() => {
+    return buildWeeklyReviewSummary(tasks, workSessions, weekWindow.weekStart, weekWindow.weekEnd, projectTaskMap);
+  }, [projectTaskMap, tasks, weekWindow.weekEnd, weekWindow.weekStart, workSessions]);
+
   const exportableTasks = useMemo(() => {
     return viewMode === 'gtd' ? filteredTasks : visibleTasksForNormalViews;
   }, [filteredTasks, viewMode, visibleTasksForNormalViews]);
+
+  const visibleTimeSummary = useMemo(() => {
+    return exportableTasks.reduce(
+      (acc, task) => {
+        acc.trackedMinutes += task.tracked_minutes ?? 0;
+        acc.adjustmentMinutes += task.manual_adjustment_minutes ?? 0;
+        acc.totalMinutes += getEffectiveTaskMinutes(task);
+        return acc;
+      },
+      { trackedMinutes: 0, adjustmentMinutes: 0, totalMinutes: 0 },
+    );
+  }, [exportableTasks]);
 
   const handleExportVisibleTasksCsv = useCallback(() => {
     downloadCsv(`board-${viewMode}-tasks`, buildTaskExportRows(exportableTasks, projectTaskMap));
@@ -656,6 +1110,94 @@ export function KanbanBoard({
       tone: 'info',
     });
   }, [appendHistoryEntry, exportableTasks, projectTaskMap, viewMode]);
+
+  const handleExportTimeSummaryCsv = useCallback(() => {
+    downloadCsv(`board-${viewMode}-time-summary`, buildTaskTimeExportRows(exportableTasks, projectTaskMap));
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'export_time_csv',
+      summary: `${VIEW_MODE_LABELS[viewMode]}の工数をCSV出力`,
+      detail: `表示中 ${exportableTasks.length}件 / 工数付き`,
+      tone: 'info',
+    });
+  }, [appendHistoryEntry, exportableTasks, projectTaskMap, viewMode]);
+
+  const handleExportTimeSummaryJson = useCallback(() => {
+    downloadJson(`board-${viewMode}-time-summary`, buildTaskTimeExportRows(exportableTasks, projectTaskMap));
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'export_time_json',
+      summary: `${VIEW_MODE_LABELS[viewMode]}の工数をJSON出力`,
+      detail: `表示中 ${exportableTasks.length}件 / 工数付き`,
+      tone: 'info',
+    });
+  }, [appendHistoryEntry, exportableTasks, projectTaskMap, viewMode]);
+
+  const handleExportDailyReviewCsv = useCallback(() => {
+    downloadCsv(
+      `daily-review-${todayKey}`,
+      buildDailyReviewExportRows({
+        summary: dailyReviewSummary,
+        tasks,
+        projectTaskMap,
+        note: dailyReviewNote,
+      }),
+    );
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'export_daily_review_csv',
+      summary: `日次レビューをCSV出力`,
+      detail: `${todayKey} / 合計 ${formatMinutesTotal(dailyReviewSummary.totalMinutes)}`,
+      tone: 'info',
+    });
+  }, [appendHistoryEntry, dailyReviewNote, dailyReviewSummary, projectTaskMap, tasks, todayKey]);
+
+  const handleExportDailyReviewJson = useCallback(() => {
+    downloadJson(
+      `daily-review-${todayKey}`,
+      buildDailyReviewExportRows({
+        summary: dailyReviewSummary,
+        tasks,
+        projectTaskMap,
+        note: dailyReviewNote,
+      }),
+    );
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'export_daily_review_json',
+      summary: `日次レビューをJSON出力`,
+      detail: `${todayKey} / 合計 ${formatMinutesTotal(dailyReviewSummary.totalMinutes)}`,
+      tone: 'info',
+    });
+  }, [appendHistoryEntry, dailyReviewNote, dailyReviewSummary, projectTaskMap, tasks, todayKey]);
+
+  const handleExportWeeklyReviewCsv = useCallback(() => {
+    downloadCsv(
+      `weekly-review-${weeklyReviewSummary.weekStart}`,
+      buildWeeklyReviewExportRows(weeklyReviewSummary, weeklyReviewNote),
+    );
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'export_weekly_review_csv',
+      summary: `週次レビューをCSV出力`,
+      detail: `${weeklyReviewSummary.weekLabel} / 合計 ${formatWeeklyReviewMinutes(weeklyReviewSummary.totalMinutes)}`,
+      tone: 'info',
+    });
+  }, [appendHistoryEntry, weeklyReviewNote, weeklyReviewSummary]);
+
+  const handleExportWeeklyReviewJson = useCallback(() => {
+    downloadJson(
+      `weekly-review-${weeklyReviewSummary.weekStart}`,
+      buildWeeklyReviewJsonPayload(weeklyReviewSummary, weeklyReviewNote),
+    );
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'export_weekly_review_json',
+      summary: `週次レビューをJSON出力`,
+      detail: `${weeklyReviewSummary.weekLabel} / 合計 ${formatWeeklyReviewMinutes(weeklyReviewSummary.totalMinutes)}`,
+      tone: 'info',
+    });
+  }, [appendHistoryEntry, weeklyReviewNote, weeklyReviewSummary]);
 
   const handleExportHistoryCsv = useCallback(() => {
     downloadCsv('board-history', buildHistoryRows(boardHistoryEntries));
@@ -902,6 +1444,178 @@ export function KanbanBoard({
     setUpdatingTaskId(null);
   };
 
+  const startTaskSession = useCallback(async (task: Task) => {
+    if (task.session_started_at) return;
+
+    if (activeSessionTask && activeSessionTask.id !== task.id) {
+      setError(`「${activeSessionTask.title}」の作業を終了してから開始してください。`);
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const nextPayload: Partial<Task> & Record<string, unknown> = {
+      session_started_at: nowIso,
+      started_at: task.started_at ?? nowIso,
+    };
+
+    if (task.status !== 'doing') {
+      nextPayload.status = 'doing';
+      if (task.status === 'waiting') {
+        nextPayload.waiting_response_date = null;
+      }
+    }
+
+    setUpdatingTaskId(task.id);
+    setError(null);
+    setNotice(null);
+
+    const { data, error: updateError } = await getSupabaseClient()
+      .from('tasks')
+      .update(nextPayload)
+      .eq('id', task.id)
+      .select('*')
+      .single();
+
+    if (updateError) {
+      setError(updateError.message);
+      setUpdatingTaskId(null);
+      return;
+    }
+
+    setTasks((prev) => prev.map((item) => (item.id === task.id ? (data as Task) : item)));
+    setNotice(`「${task.title}」の作業を開始しました。`);
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'time_start',
+      summary: `作業開始: ${task.title}`,
+      detail: `開始 ${formatDate(nowIso)}` ,
+      tone: 'info',
+      contextId: task.project_task_id ?? undefined,
+    });
+    setClockNow(Date.now());
+    setUpdatingTaskId(null);
+  }, [activeSessionTask, appendHistoryEntry]);
+
+  const stopTaskSession = useCallback(async (task: Task) => {
+    if (!task.session_started_at) return;
+
+    const endedAt = new Date().toISOString();
+    const durationMinutes = diffMinutes(task.session_started_at, endedAt);
+
+    setUpdatingTaskId(task.id);
+    setError(null);
+    setNotice(null);
+
+    const [taskResult, sessionResult] = await Promise.all([
+      getSupabaseClient()
+        .from('tasks')
+        .update({
+          session_started_at: null,
+          tracked_minutes: (task.tracked_minutes ?? 0) + durationMinutes,
+        })
+        .eq('id', task.id)
+        .select('*')
+        .single(),
+      getSupabaseClient()
+        .from('task_work_sessions')
+        .insert({
+          user_id: userId,
+          task_id: task.id,
+          entry_type: 'timer',
+          started_at: task.session_started_at,
+          ended_at: endedAt,
+          duration_minutes: durationMinutes,
+          note: null,
+        })
+        .select('*')
+        .single(),
+    ]);
+
+    if (taskResult.error || sessionResult.error) {
+      setError(taskResult.error?.message ?? sessionResult.error?.message ?? '作業終了に失敗しました');
+      await fetchTasks(true);
+      await fetchWorkSessions();
+      setUpdatingTaskId(null);
+      return;
+    }
+
+    setTasks((prev) => prev.map((item) => (item.id === task.id ? (taskResult.data as Task) : item)));
+    setWorkSessions((prev) => [sessionResult.data as WorkSessionEntry, ...prev]);
+    setNotice(`「${task.title}」の作業を終了しました。${formatMinutesTotal(durationMinutes)} を加算しました。`);
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'time_stop',
+      summary: `作業終了: ${task.title}`,
+      detail: `${formatMinutesTotal(durationMinutes)} を記録`,
+      tone: 'success',
+      contextId: task.project_task_id ?? undefined,
+    });
+    setClockNow(Date.now());
+    setUpdatingTaskId(null);
+  }, [appendHistoryEntry, fetchTasks, fetchWorkSessions, userId]);
+
+  const saveManualAdjustment = useCallback(async () => {
+    if (!adjustingTask) return;
+
+    const minutes = Number(adjustmentMinutesInput);
+    if (!Number.isFinite(minutes) || minutes === 0) {
+      setError('補正分は 0 以外の整数で入力してください。');
+      return;
+    }
+
+    setUpdatingTaskId(adjustingTask.id);
+    setError(null);
+    setNotice(null);
+
+    const nowIso = new Date().toISOString();
+    const [taskResult, sessionResult] = await Promise.all([
+      getSupabaseClient()
+        .from('tasks')
+        .update({
+          manual_adjustment_minutes: (adjustingTask.manual_adjustment_minutes ?? 0) + minutes,
+        })
+        .eq('id', adjustingTask.id)
+        .select('*')
+        .single(),
+      getSupabaseClient()
+        .from('task_work_sessions')
+        .insert({
+          user_id: userId,
+          task_id: adjustingTask.id,
+          entry_type: 'manual_adjustment',
+          started_at: nowIso,
+          ended_at: nowIso,
+          duration_minutes: minutes,
+          note: adjustmentNote.trim() || null,
+        })
+        .select('*')
+        .single(),
+    ]);
+
+    if (taskResult.error || sessionResult.error) {
+      setError(taskResult.error?.message ?? sessionResult.error?.message ?? '手動補正に失敗しました');
+      await fetchTasks(true);
+      await fetchWorkSessions();
+      setUpdatingTaskId(null);
+      return;
+    }
+
+    setTasks((prev) => prev.map((item) => (item.id === adjustingTask.id ? (taskResult.data as Task) : item)));
+    setWorkSessions((prev) => [sessionResult.data as WorkSessionEntry, ...prev]);
+    setNotice(`「${adjustingTask.title}」に ${formatMinutesTotal(minutes)} の補正を保存しました。`);
+    appendHistoryEntry({
+      scope: 'board',
+      action: 'time_adjust',
+      summary: `工数補正: ${adjustingTask.title}`,
+      detail: `${formatMinutesTotal(minutes)} / ${adjustmentNote.trim() || '理由なし'}`,
+      tone: minutes > 0 ? 'warning' : 'info',
+      contextId: adjustingTask.project_task_id ?? undefined,
+    });
+    setAdjustingTask(null);
+    setAdjustmentMinutesInput('');
+    setAdjustmentNote('');
+    setUpdatingTaskId(null);
+  }, [adjustingTask, adjustmentMinutesInput, adjustmentNote, appendHistoryEntry, fetchTasks, fetchWorkSessions, userId]);
 
   const applySuggestedWaiting = useCallback(async (task: Task) => {
     const suggestedDate = task.waiting_response_date || getSuggestedWaitingResponseDate();
@@ -1344,6 +2058,34 @@ export function KanbanBoard({
         </div>
       </header>
 
+      {activeSessionTask ? (
+        <section className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold text-blue-700">作業中</p>
+              <h2 className="text-base font-semibold text-slate-900">{activeSessionTask.title}</h2>
+              <p className="text-sm text-slate-600">経過 {activeSessionElapsedLabel ?? '0分'} / 累積 {formatMinutesTotal(getEffectiveTaskMinutes(activeSessionTask))}</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void stopTaskSession(activeSessionTask)}
+                className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+              >
+                作業終了
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingTask(activeSessionTask)}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                開く
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : null}
+
       <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
         <aside className="space-y-6 xl:sticky xl:top-32 xl:self-start">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
@@ -1717,6 +2459,7 @@ export function KanbanBoard({
                     ) : (
                       <div className="mt-2 grid gap-2 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,1fr)]">
                         <FeaturedFocusTaskCard
+                          task={todayFocusTasks[0].task}
                           title={todayFocusTasks[0].task.title}
                           reason={todayFocusTasks[0].reason}
                           detail={todayFocusTasks[0].detail}
@@ -1725,11 +2468,18 @@ export function KanbanBoard({
                           onOpen={() => setEditingTask(todayFocusTasks[0].task)}
                           onDone={() => void updateStatus(todayFocusTasks[0].task, 'done')}
                           onWaiting={() => void applySuggestedWaiting(todayFocusTasks[0].task)}
+                          onStartSession={() => void startTaskSession(todayFocusTasks[0].task)}
+                          onStopSession={() => void stopTaskSession(todayFocusTasks[0].task)}
+                          onOpenAdjustment={() => setAdjustingTask(todayFocusTasks[0].task)}
+                          activeSessionTaskId={activeSessionTask?.id ?? null}
+                          timeDisplayNow={clockNow}
+                          disabled={updatingTaskId === todayFocusTasks[0].task.id}
                         />
                         <div className="grid gap-2">
                           {todayFocusTasks.slice(1).map((item) => (
                             <FocusTaskCard
                               key={item.task.id}
+                              task={item.task}
                               title={item.task.title}
                               reason={item.reason}
                               detail={item.detail}
@@ -1738,6 +2488,12 @@ export function KanbanBoard({
                               onOpen={() => setEditingTask(item.task)}
                               onDone={() => void updateStatus(item.task, 'done')}
                               onWaiting={() => void applySuggestedWaiting(item.task)}
+                              onStartSession={() => void startTaskSession(item.task)}
+                              onStopSession={() => void stopTaskSession(item.task)}
+                              onOpenAdjustment={() => setAdjustingTask(item.task)}
+                              activeSessionTaskId={activeSessionTask?.id ?? null}
+                              timeDisplayNow={clockNow}
+                              disabled={updatingTaskId === item.task.id}
                             />
                           ))}
                           {todayFocusTasks.length === 1 ? (
@@ -1833,6 +2589,39 @@ export function KanbanBoard({
                     />
                   ))}
                 </div>
+              ) : null}
+
+              {viewMode === 'today' ? (
+                <TodayTimeWorkspacePanel
+                  todayKey={todayKey}
+                  activeSessionTask={activeSessionTask}
+                  activeSessionElapsedLabel={activeSessionElapsedLabel}
+                  visibleTimeSummary={visibleTimeSummary}
+                  dailyReviewSummary={dailyReviewSummary}
+                  dailyReviewNote={dailyReviewNote}
+                  weeklyReviewSummary={weeklyReviewSummary}
+                  weeklyReviewNote={weeklyReviewNote}
+                  onDailyReviewNoteChange={setDailyReviewNote}
+                  onWeeklyReviewNoteChange={setWeeklyReviewNote}
+                  onStopActiveSession={
+                    activeSessionTask ? () => void stopTaskSession(activeSessionTask) : undefined
+                  }
+                  onOpenActiveAdjustment={
+                    activeSessionTask ? () => setAdjustingTask(activeSessionTask) : undefined
+                  }
+                  onOpenTask={(taskId) => {
+                    const target = tasks.find((task) => task.id === taskId);
+                    if (target) {
+                      setEditingTask(target);
+                    }
+                  }}
+                  onExportTimeCsv={handleExportTimeSummaryCsv}
+                  onExportTimeJson={handleExportTimeSummaryJson}
+                  onExportDailyCsv={handleExportDailyReviewCsv}
+                  onExportDailyJson={handleExportDailyReviewJson}
+                  onExportWeeklyCsv={handleExportWeeklyReviewCsv}
+                  onExportWeeklyJson={handleExportWeeklyReviewJson}
+                />
               ) : null}
 
               {selectionMode ? (
@@ -1993,6 +2782,11 @@ export function KanbanBoard({
                           onToggleSelect={toggleTaskSelection}
                           projectTaskMap={projectTaskMap}
                           projectNextActionCountMap={projectNextActionCountMap}
+                          onStartSession={startTaskSession}
+                          onStopSession={stopTaskSession}
+                          onOpenAdjustment={setAdjustingTask}
+                          activeSessionTaskId={activeSessionTask?.id ?? null}
+                          timeDisplayNow={clockNow}
                           mode="kanban"
                         />
                       ))}
@@ -2032,6 +2826,11 @@ export function KanbanBoard({
                         onToggleSelect={toggleTaskSelection}
                         projectTaskMap={projectTaskMap}
                         projectNextActionCountMap={projectNextActionCountMap}
+                        onStartSession={startTaskSession}
+                        onStopSession={stopTaskSession}
+                        onOpenAdjustment={setAdjustingTask}
+                        activeSessionTaskId={activeSessionTask?.id ?? null}
+                        timeDisplayNow={clockNow}
                         mode="matrix"
                       />
                     ))
@@ -2083,6 +2882,11 @@ export function KanbanBoard({
                         expandedSectionKeys={expandedSectionKeys}
                         getLimitedItems={getLimitedItems}
                         onToggleSectionExpanded={toggleSectionExpanded}
+                        onStartSession={startTaskSession}
+                        onStopSession={stopTaskSession}
+                        onOpenAdjustment={setAdjustingTask}
+                        activeSessionTaskId={activeSessionTask?.id ?? null}
+                        timeDisplayNow={clockNow}
                       />
                     ))
                   ) : (
@@ -2101,6 +2905,11 @@ export function KanbanBoard({
                           onToggleSelect={toggleTaskSelection}
                           projectTaskMap={projectTaskMap}
                           projectNextActionCountMap={projectNextActionCountMap}
+                          onStartSession={startTaskSession}
+                          onStopSession={stopTaskSession}
+                          onOpenAdjustment={setAdjustingTask}
+                          activeSessionTaskId={activeSessionTask?.id ?? null}
+                          timeDisplayNow={clockNow}
                           mode="gtd"
                         />
                       ))}
@@ -2144,6 +2953,11 @@ export function KanbanBoard({
                         onToggleSelect={toggleTaskSelection}
                         projectTaskMap={projectTaskMap}
                         projectNextActionCountMap={projectNextActionCountMap}
+                        onStartSession={startTaskSession}
+                        onStopSession={stopTaskSession}
+                        onOpenAdjustment={setAdjustingTask}
+                        activeSessionTaskId={activeSessionTask?.id ?? null}
+                        timeDisplayNow={clockNow}
                         mode="gtd"
                       />
                     ))}
@@ -2180,6 +2994,23 @@ export function KanbanBoard({
               }
             : undefined
         }
+      />
+
+      <TimeAdjustmentModal
+        task={adjustingTask}
+        open={adjustingTask !== null}
+        minutesValue={adjustmentMinutesInput}
+        noteValue={adjustmentNote}
+        saving={Boolean(adjustingTask && updatingTaskId === adjustingTask.id)}
+        onMinutesChange={setAdjustmentMinutesInput}
+        onNoteChange={setAdjustmentNote}
+        onClose={() => {
+          if (updatingTaskId) return;
+          setAdjustingTask(null);
+          setAdjustmentMinutesInput('');
+          setAdjustmentNote('');
+        }}
+        onSave={() => void saveManualAdjustment()}
       />
     </main>
   );
@@ -2411,6 +3242,11 @@ function ProjectTaskAccordionCard({
   expandedSectionKeys,
   getLimitedItems,
   onToggleSectionExpanded,
+  onStartSession,
+  onStopSession,
+  onOpenAdjustment,
+  activeSessionTaskId,
+  timeDisplayNow,
 }: {
   task: Task;
   disabled: boolean;
@@ -2433,6 +3269,11 @@ function ProjectTaskAccordionCard({
   expandedSectionKeys: Record<string, boolean>;
   getLimitedItems: <T>(key: string, items: T[], limit?: number) => T[];
   onToggleSectionExpanded: (key: string) => void;
+  onStartSession: (task: Task) => Promise<void>;
+  onStopSession: (task: Task) => Promise<void>;
+  onOpenAdjustment: (task: Task) => void;
+  activeSessionTaskId: string | null;
+  timeDisplayNow: number;
 }) {
   return (
     <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50 p-3">
@@ -2442,6 +3283,11 @@ function ProjectTaskAccordionCard({
         onEdit={onEdit}
         projectTaskMap={projectTaskMap}
         projectNextActionCountMap={projectNextActionCountMap}
+        onStartSession={onStartSession}
+        onStopSession={onStopSession}
+        onOpenAdjustment={onOpenAdjustment}
+        activeSessionTaskId={activeSessionTaskId}
+        timeDisplayNow={timeDisplayNow}
         mode="gtd"
       />
 
@@ -2488,6 +3334,11 @@ function ProjectTaskAccordionCard({
                   onToggleSelect={onToggleSelect}
                   projectTaskMap={projectTaskMap}
                   projectNextActionCountMap={projectNextActionCountMap}
+                  onStartSession={onStartSession}
+                  onStopSession={onStopSession}
+                  onOpenAdjustment={onOpenAdjustment}
+                  activeSessionTaskId={activeSessionTaskId}
+                  timeDisplayNow={timeDisplayNow}
                   mode="gtd"
                 />
               ))}
@@ -2506,6 +3357,7 @@ function ProjectTaskAccordionCard({
 }
 
 function FeaturedFocusTaskCard({
+  task,
   title,
   reason,
   detail,
@@ -2514,7 +3366,14 @@ function FeaturedFocusTaskCard({
   onOpen,
   onDone,
   onWaiting,
+  onStartSession,
+  onStopSession,
+  onOpenAdjustment,
+  activeSessionTaskId,
+  timeDisplayNow,
+  disabled = false,
 }: {
+  task: Task;
   title: string;
   reason: string;
   detail: string;
@@ -2523,6 +3382,12 @@ function FeaturedFocusTaskCard({
   onOpen: () => void;
   onDone: () => void;
   onWaiting: () => void;
+  onStartSession: () => void;
+  onStopSession: () => void;
+  onOpenAdjustment: () => void;
+  activeSessionTaskId: string | null;
+  timeDisplayNow: number;
+  disabled?: boolean;
 }) {
   const toneClassName =
     tone === 'danger'
@@ -2530,6 +3395,12 @@ function FeaturedFocusTaskCard({
       : tone === 'warning'
         ? 'border-amber-200 bg-amber-50 text-amber-700'
         : 'border-blue-200 bg-blue-50 text-blue-700';
+
+  const totalMinutes = getEffectiveTaskMinutes(task);
+  const sessionElapsedLabel = task.session_started_at
+    ? formatMinutesTotal(diffMinutes(task.session_started_at, new Date(timeDisplayNow).toISOString()))
+    : null;
+  const anotherTaskRunning = Boolean(activeSessionTaskId && activeSessionTaskId !== task.id);
 
   return (
     <article className="rounded-3xl border border-slate-900 bg-gradient-to-br from-white via-slate-50 to-blue-50 p-6 shadow-md ring-1 ring-slate-900/10">
@@ -2540,7 +3411,24 @@ function FeaturedFocusTaskCard({
       </div>
       <h4 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">{title}</h4>
       <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
-      <div className="mt-5 flex flex-wrap gap-2">
+      <div className="mt-3 flex flex-wrap gap-2 text-xs">
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">累積: {formatMinutesTotal(totalMinutes)}</span>
+        {task.manual_adjustment_minutes !== 0 ? (
+          <span className={`rounded-md px-2 py-1 ${task.manual_adjustment_minutes > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>
+            補正: {formatMinutesTotal(task.manual_adjustment_minutes)}
+          </span>
+        ) : null}
+        {task.session_started_at ? (
+          <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">計測中: {sessionElapsedLabel}</span>
+        ) : null}
+      </div>
+      <div className="mt-5 flex flex-wrap gap-2" data-no-card-click="true">
+        {task.session_started_at ? (
+          <button type="button" onClick={onStopSession} disabled={disabled} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">作業終了</button>
+        ) : (
+          <button type="button" onClick={onStartSession} disabled={disabled || anotherTaskRunning} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{anotherTaskRunning ? '別タスク計測中' : '作業開始'}</button>
+        )}
+        <button type="button" onClick={onOpenAdjustment} disabled={disabled} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">補正</button>
         <button type="button" onClick={onDone} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800">完了</button>
         <button type="button" onClick={onWaiting} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition hover:bg-blue-100">待ち＋日付</button>
         <button type="button" onClick={onOpen} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50">開く</button>
@@ -2597,6 +3485,7 @@ function StalledTaskRow({
 }
 
 function FocusTaskCard({
+  task,
   title,
   reason,
   detail,
@@ -2605,7 +3494,14 @@ function FocusTaskCard({
   onOpen,
   onDone,
   onWaiting,
+  onStartSession,
+  onStopSession,
+  onOpenAdjustment,
+  activeSessionTaskId,
+  timeDisplayNow,
+  disabled = false,
 }: {
+  task: Task;
   title: string;
   reason: string;
   detail: string;
@@ -2614,6 +3510,12 @@ function FocusTaskCard({
   onOpen: () => void;
   onDone: () => void;
   onWaiting: () => void;
+  onStartSession: () => void;
+  onStopSession: () => void;
+  onOpenAdjustment: () => void;
+  activeSessionTaskId: string | null;
+  timeDisplayNow: number;
+  disabled?: boolean;
 }) {
   const toneClassName =
     tone === 'danger'
@@ -2621,6 +3523,12 @@ function FocusTaskCard({
       : tone === 'warning'
         ? 'border-amber-200 bg-amber-50 text-amber-700'
         : 'border-blue-200 bg-blue-50 text-blue-700';
+
+  const totalMinutes = getEffectiveTaskMinutes(task);
+  const sessionElapsedLabel = task.session_started_at
+    ? formatMinutesTotal(diffMinutes(task.session_started_at, new Date(timeDisplayNow).toISOString()))
+    : null;
+  const anotherTaskRunning = Boolean(activeSessionTaskId && activeSessionTaskId !== task.id);
 
   return (
     <article className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
@@ -2635,7 +3543,19 @@ function FocusTaskCard({
         </div>
       </div>
       <p className="mt-1 text-xs text-slate-600">{detail}</p>
-      <div className="mt-3 flex flex-wrap gap-2">
+      <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">累積: {formatMinutesTotal(totalMinutes)}</span>
+        {task.session_started_at ? (
+          <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">計測中: {sessionElapsedLabel}</span>
+        ) : null}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-2" data-no-card-click="true">
+        {task.session_started_at ? (
+          <button type="button" onClick={onStopSession} disabled={disabled} className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">作業終了</button>
+        ) : (
+          <button type="button" onClick={onStartSession} disabled={disabled || anotherTaskRunning} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{anotherTaskRunning ? '別タスク計測中' : '作業開始'}</button>
+        )}
+        <button type="button" onClick={onOpenAdjustment} disabled={disabled} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">補正</button>
         <button type="button" onClick={onDone} className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-medium text-white transition hover:bg-slate-800">完了</button>
         <button type="button" onClick={onWaiting} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1.5 text-[11px] font-medium text-blue-700 transition hover:bg-blue-100">待ち＋日付</button>
         <button type="button" onClick={onOpen} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">開く</button>
@@ -2670,6 +3590,420 @@ function SectionExpandButton({
 
 type TaskCardMode = 'kanban' | 'matrix' | 'gtd';
 
+function TodayTimeWorkspacePanel({
+  todayKey,
+  activeSessionTask,
+  activeSessionElapsedLabel,
+  visibleTimeSummary,
+  dailyReviewSummary,
+  dailyReviewNote,
+  weeklyReviewSummary,
+  weeklyReviewNote,
+  onDailyReviewNoteChange,
+  onWeeklyReviewNoteChange,
+  onStopActiveSession,
+  onOpenActiveAdjustment,
+  onOpenTask,
+  onExportTimeCsv,
+  onExportTimeJson,
+  onExportDailyCsv,
+  onExportDailyJson,
+  onExportWeeklyCsv,
+  onExportWeeklyJson,
+}: {
+  todayKey: string;
+  activeSessionTask: Task | null;
+  activeSessionElapsedLabel: string | null;
+  visibleTimeSummary: {
+    trackedMinutes: number;
+    adjustmentMinutes: number;
+    totalMinutes: number;
+  };
+  dailyReviewSummary: DailyReviewSummary;
+  dailyReviewNote: string;
+  weeklyReviewSummary: WeeklyReviewSummary;
+  weeklyReviewNote: string;
+  onDailyReviewNoteChange: (value: string) => void;
+  onWeeklyReviewNoteChange: (value: string) => void;
+  onStopActiveSession?: () => void;
+  onOpenActiveAdjustment?: () => void;
+  onOpenTask: (taskId: string) => void;
+  onExportTimeCsv: () => void;
+  onExportTimeJson: () => void;
+  onExportDailyCsv: () => void;
+  onExportDailyJson: () => void;
+  onExportWeeklyCsv: () => void;
+  onExportWeeklyJson: () => void;
+}) {
+  const visibleWeeklyTrends = weeklyReviewSummary.stallTrends.filter((item) => item.count > 0);
+
+  return (
+    <div className="mt-2 space-y-3">
+      <div className="grid gap-3 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">今日の工数</h3>
+              <p className="mt-1 text-sm text-slate-500">開始 / 終了ボタンと補正、AI向けエクスポート</p>
+            </div>
+            {activeSessionTask ? (
+              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+                稼働中
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mt-4 grid gap-2 md:grid-cols-3">
+            <CompactContextStat label="表示中累積" value={formatMinutesTotal(visibleTimeSummary.totalMinutes)} />
+            <CompactContextStat label="自動計測" value={formatMinutesTotal(visibleTimeSummary.trackedMinutes)} />
+            <CompactContextStat
+              label="手動補正"
+              value={formatMinutesTotal(visibleTimeSummary.adjustmentMinutes)}
+              danger={visibleTimeSummary.adjustmentMinutes < 0}
+            />
+          </div>
+
+          {activeSessionTask ? (
+            <div className="mt-4 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-blue-700">現在の作業</p>
+                  <p className="mt-1 text-sm font-medium text-slate-900">{activeSessionTask.title}</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    経過 {activeSessionElapsedLabel ?? '0分'} / 累積 {formatMinutesTotal(getEffectiveTaskMinutes(activeSessionTask))}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={onStopActiveSession}
+                    className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
+                  >
+                    作業終了
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onOpenActiveAdjustment}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                  >
+                    補正
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+              稼働中のタスクはありません。今日画面のカードにある「作業開始」から計測できます。
+            </p>
+          )}
+
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
+            <button
+              type="button"
+              onClick={onExportTimeCsv}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              工数CSV
+            </button>
+            <button
+              type="button"
+              onClick={onExportTimeJson}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              工数JSON
+            </button>
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">日次レビュー</h3>
+              <p className="mt-1 text-sm text-slate-500">{todayKey} の振り返り</p>
+            </div>
+            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700">
+              {dailyReviewSummary.taskSummaries.length}件
+            </span>
+          </div>
+
+          <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-2">
+            <CompactContextStat label="今日の合計" value={formatMinutesTotal(dailyReviewSummary.totalMinutes)} />
+            <CompactContextStat label="完了" value={`${dailyReviewSummary.completedCount}件`} />
+            <CompactContextStat label="作業セッション" value={`${dailyReviewSummary.sessionCount}回`} />
+            <CompactContextStat
+              label="補正入力"
+              value={`${dailyReviewSummary.adjustmentCount}回`}
+              danger={dailyReviewSummary.adjustmentCount > 0}
+            />
+          </div>
+
+          <div className="mt-4 space-y-2">
+            {dailyReviewSummary.taskSummaries.slice(0, 5).map((item) => (
+              <button
+                key={item.taskId}
+                type="button"
+                onClick={() => onOpenTask(item.taskId)}
+                className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100"
+              >
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-medium text-slate-900">{item.title}</span>
+                  <span className="block text-xs text-slate-500">
+                    {item.projectTitle ? `Project: ${item.projectTitle}` : '単独タスク'}
+                  </span>
+                </span>
+                <span className="text-xs font-semibold text-slate-700">{formatMinutesTotal(item.totalMinutes)}</span>
+              </button>
+            ))}
+            {dailyReviewSummary.taskSummaries.length === 0 ? (
+              <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
+                今日の記録はまだありません。
+              </p>
+            ) : null}
+          </div>
+
+          <label className="mt-4 block text-sm font-medium text-slate-700">終業メモ</label>
+          <textarea
+            value={dailyReviewNote}
+            onChange={(event) => onDailyReviewNoteChange(event.target.value)}
+            placeholder="今日うまくいったこと、止まった理由、次に改善したいこと"
+            rows={4}
+            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+
+          <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
+            <button
+              type="button"
+              onClick={onExportDailyCsv}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              日次CSV
+            </button>
+            <button
+              type="button"
+              onClick={onExportDailyJson}
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              日次JSON
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">週次レビュー</h3>
+            <p className="mt-1 text-sm text-slate-500">{weeklyReviewSummary.weekLabel} の振り返り</p>
+          </div>
+          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+            日次と同じ見方で週を確認
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          <CompactContextStat label="週の合計" value={formatWeeklyReviewMinutes(weeklyReviewSummary.totalMinutes)} />
+          <CompactContextStat label="完了" value={`${weeklyReviewSummary.completedCount}件`} />
+          <CompactContextStat label="作業セッション" value={`${weeklyReviewSummary.sessionCount}件`} />
+          <CompactContextStat
+            label="補正入力"
+            value={`${weeklyReviewSummary.adjustmentCount}件`}
+            danger={weeklyReviewSummary.adjustmentCount > 0}
+          />
+        </div>
+
+        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
+          <ReviewTopListCard
+            title="タスク別の工数上位"
+            items={weeklyReviewSummary.taskSummaries}
+            emptyLabel="今週はタスク別の工数記録がありません。"
+          />
+          <ReviewTopListCard
+            title="project別の工数上位"
+            items={weeklyReviewSummary.projectSummaries}
+            emptyLabel="今週はproject別の工数記録がありません。"
+          />
+          <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+            <h4 className="text-sm font-semibold text-slate-900">止まり案件の発生傾向</h4>
+            {visibleWeeklyTrends.length === 0 ? (
+              <p className="mt-3 text-sm text-slate-500">今週は目立つ停滞傾向はありません。</p>
+            ) : (
+              <div className="mt-3 space-y-2">
+                {visibleWeeklyTrends.map((item) => (
+                  <div
+                    key={item.key}
+                    className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-slate-900">{item.label}</p>
+                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                        {item.count}件
+                      </span>
+                    </div>
+                    <p className="mt-1 text-[11px] text-slate-500">{item.detail}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        </div>
+
+        <label className="mt-4 block text-sm font-medium text-slate-700">来週に向けた振り返りメモ</label>
+        <textarea
+          value={weeklyReviewNote}
+          onChange={(event) => onWeeklyReviewNoteChange(event.target.value)}
+          placeholder="例: waiting の催促を前倒しする / 高工数タスクを分割する / project の次アクションを明確にする"
+          rows={4}
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+        <p className="mt-1 text-xs text-slate-500">このメモは週次CSV / JSON にも含まれます。</p>
+
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
+          <button
+            type="button"
+            onClick={onExportWeeklyCsv}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            週次CSV
+          </button>
+          <button
+            type="button"
+            onClick={onExportWeeklyJson}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            週次JSON
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function ReviewTopListCard({
+  title,
+  items,
+  emptyLabel,
+}: {
+  title: string;
+  items: WeeklyReviewTopSummary[];
+  emptyLabel: string;
+}) {
+  return (
+    <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+      <h4 className="text-sm font-semibold text-slate-900">{title}</h4>
+      {items.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500">{emptyLabel}</p>
+      ) : (
+        <div className="mt-3 space-y-2">
+          {items.slice(0, 5).map((item, index) => (
+            <div
+              key={`${title}-${item.id}`}
+              className="flex items-start justify-between gap-3 rounded-lg border border-slate-200 bg-white px-3 py-2"
+            >
+              <div className="min-w-0">
+                <p className="text-xs font-semibold text-slate-400">#{index + 1}</p>
+                <p className="truncate text-sm font-medium text-slate-900">{item.title}</p>
+                <p className="mt-0.5 text-[11px] text-slate-500">セッション {item.sessionCount}件</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm font-semibold text-slate-900">{formatWeeklyReviewMinutes(item.totalMinutes)}</p>
+                <p className="text-[11px] text-slate-500">{item.totalMinutes}分</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TimeAdjustmentModal({
+  task,
+  open,
+  minutesValue,
+  noteValue,
+  saving,
+  onMinutesChange,
+  onNoteChange,
+  onClose,
+  onSave,
+}: {
+  task: Task | null;
+  open: boolean;
+  minutesValue: string;
+  noteValue: string;
+  saving: boolean;
+  onMinutesChange: (value: string) => void;
+  onNoteChange: (value: string) => void;
+  onClose: () => void;
+  onSave: () => void;
+}) {
+  if (!open || !task) return null;
+
+  const totalMinutes = getEffectiveTaskMinutes(task);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 px-4">
+      <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-900">工数の手動補正</p>
+            <p className="mt-1 text-sm text-slate-500">{task.title}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            閉じる
+          </button>
+        </div>
+
+        <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600">
+          <p>現在の累積: <span className="font-semibold text-slate-900">{formatMinutesTotal(totalMinutes)}</span></p>
+          <p className="mt-1">自動計測 {formatMinutesTotal(task.tracked_minutes ?? 0)} / 補正 {formatMinutesTotal(task.manual_adjustment_minutes ?? 0)}</p>
+        </div>
+
+        <label className="mt-4 block text-sm font-medium text-slate-700">補正分（分）</label>
+        <input
+          type="number"
+          value={minutesValue}
+          onChange={(event) => onMinutesChange(event.target.value)}
+          placeholder="例: 15 / -30"
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+        <p className="mt-1 text-xs text-slate-500">押し忘れで増え過ぎた場合はマイナス値で補正できます。</p>
+
+        <label className="mt-4 block text-sm font-medium text-slate-700">理由メモ</label>
+        <textarea
+          value={noteValue}
+          onChange={(event) => onNoteChange(event.target.value)}
+          placeholder="終業後に終了し忘れ、会議時間を合算、など"
+          rows={3}
+          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        />
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            onClick={onSave}
+            disabled={saving}
+            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {saving ? '保存中...' : '補正を保存'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 type TaskCardProps = {
   task: Task;
   disabled: boolean;
@@ -2686,6 +4020,11 @@ type TaskCardProps = {
   onToggleSelect?: (taskId: string) => void;
   projectTaskMap: Record<string, Task>;
   projectNextActionCountMap: Record<string, number>;
+  onStartSession?: (task: Task) => Promise<void>;
+  onStopSession?: (task: Task) => Promise<void>;
+  onOpenAdjustment?: (task: Task) => void;
+  activeSessionTaskId?: string | null;
+  timeDisplayNow?: number;
   mode: TaskCardMode;
 };
 
@@ -2703,6 +4042,11 @@ function TaskCard({
   onToggleSelect,
   projectTaskMap,
   projectNextActionCountMap,
+  onStartSession,
+  onStopSession,
+  onOpenAdjustment,
+  activeSessionTaskId = null,
+  timeDisplayNow = Date.now(),
   mode,
 }: TaskCardProps) {
   const linkedProjectTitle = task.project_task_id ? projectTaskMap[task.project_task_id]?.title : null;
@@ -2721,6 +4065,11 @@ function TaskCard({
   const waitingResponseOverdue = isWaitingResponseOverdue(task);
   const waitingResponseMissing = isWaitingWithoutResponseDate(task);
   const doingStale = isDoingStale(task);
+  const totalMinutes = getEffectiveTaskMinutes(task);
+  const sessionElapsedLabel = task.session_started_at
+    ? formatMinutesTotal(diffMinutes(task.session_started_at, new Date(timeDisplayNow).toISOString()))
+    : null;
+  const anotherTaskRunning = Boolean(activeSessionTaskId && activeSessionTaskId !== task.id);
 
   const pointerStartRef = useRef<{ x: number; y: number } | null>(null);
   const movedRef = useRef(false);
@@ -2839,6 +4188,22 @@ function TaskCard({
           </>
         ) : null}
 
+        <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
+          累積: {formatMinutesTotal(totalMinutes)}
+        </span>
+
+        {task.manual_adjustment_minutes !== 0 ? (
+          <span className={`rounded-md px-2 py-1 ${task.manual_adjustment_minutes > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>
+            補正: {formatMinutesTotal(task.manual_adjustment_minutes)}
+          </span>
+        ) : null}
+
+        {task.session_started_at ? (
+          <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">
+            計測中: {sessionElapsedLabel}
+          </span>
+        ) : null}
+
         {doingStale ? (
           <span className="rounded-md bg-amber-100 px-2 py-1 text-amber-700">
             進行停滞
@@ -2897,6 +4262,38 @@ function TaskCard({
           </span>
         ) : null}
       </div>
+
+      {!selectionMode ? (
+        <div className="mt-3 flex flex-wrap gap-2" data-no-card-click="true">
+          {task.session_started_at ? (
+            <button
+              type="button"
+              onClick={() => void onStopSession?.(task)}
+              disabled={disabled}
+              className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              作業終了
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void onStartSession?.(task)}
+              disabled={disabled || anotherTaskRunning}
+              className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {anotherTaskRunning ? '別タスク計測中' : '作業開始'}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => onOpenAdjustment?.(task)}
+            disabled={disabled}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            補正
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
