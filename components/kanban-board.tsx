@@ -2991,21 +2991,21 @@ export function KanbanBoard({
               ) : null}
             </div>
 
-            <section className="rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex flex-wrap items-center gap-2">
+            <section className="rounded-2xl border border-slate-200 bg-white/95 p-1.5 shadow-sm backdrop-blur sm:p-2">
+              <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
                   <h2 className="text-sm font-semibold text-slate-900 sm:text-base">
                     {VIEW_MODE_LABELS[viewMode]} の現在地
                   </h2>
-                  <div className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-700">
+                  <div className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 sm:px-2.5 sm:text-[11px]">
                     表示モード: {VIEW_MODE_LABELS[viewMode]}
                   </div>
-                  <div className="inline-flex items-center rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                  <div className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 sm:px-2.5 sm:text-[11px]">
                     並び順: {TASK_SORT_LABELS[sortKey]}
                   </div>
                   <Link
                     href="/projects"
-                    className="rounded-full border border-slate-300 bg-white px-3 py-1 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50"
+                    className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[10px] font-medium text-slate-700 transition hover:bg-slate-50 sm:px-3 sm:text-[11px]"
                   >
                     Project
                   </Link>
@@ -3020,7 +3020,7 @@ export function KanbanBoard({
                         setSelectedTaskIds([]);
                       }
                     }}
-                    className={`rounded-lg border px-3 py-2 text-xs font-medium transition sm:text-sm ${
+                    className={`rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition sm:px-3 sm:py-2 sm:text-sm ${
                       selectionMode
                         ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
                         : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
@@ -3034,7 +3034,7 @@ export function KanbanBoard({
                       type="button"
                       onClick={handleToggleSelectAllVisible}
                       disabled={bulkSelectableTaskIds.length === 0}
-                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 sm:text-sm"
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50 sm:px-3 sm:py-2 sm:text-sm"
                     >
                       {allVisibleSelected ? '表示中を解除' : '表示中を全選択'}
                     </button>
@@ -3042,7 +3042,7 @@ export function KanbanBoard({
                 </div>
               </div>
 
-              <div className="mt-1.5 grid gap-1.5 md:grid-cols-2 xl:grid-cols-4">
+              <div className="mt-1 grid gap-1.5 md:grid-cols-2 xl:grid-cols-4">
                 <CompactContextStat label="表示中タスク" value={`${visibleTaskCount}件`} />
                 {viewMode === 'today' ? (
                   <>
@@ -3075,7 +3075,7 @@ export function KanbanBoard({
                 )}
               </div>
 
-              <div className="mt-1.5 space-y-1.5">
+              <div className="mt-1 space-y-1">
                 {boardAlertItems.length > 0 ? (
                   <AlertStrip items={boardAlertItems} compact defaultCollapsed />
                 ) : null}
@@ -3088,21 +3088,21 @@ export function KanbanBoard({
               </div>
 
               {viewMode === 'today' ? (
-                <div className="mt-2 space-y-2">
+                <div className="mt-1.5 space-y-1.5">
                   <TodayReviewModeToggle mode={todayScreenMode} onChange={setTodayScreenMode} />
 
                   {todayScreenMode === 'today' ? (
                     <>
-                      <div className="grid gap-2 xl:grid-cols-[minmax(0,1.6fr)_minmax(20rem,1fr)]">
-                        <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-                          <div className="flex items-center justify-between gap-2">
+                      <div className="grid gap-1.5 xl:grid-cols-[minmax(0,1.75fr)_minmax(18rem,0.95fr)]">
+                        <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
+                          <div className="flex items-center justify-between gap-1.5">
                             <h3 className="text-sm font-semibold text-slate-900">今やる1件 と 次にやる2件</h3>
                             <span className="text-[11px] text-slate-500">主役を最優先で表示</span>
                           </div>
                           {todayFocusTasks.length === 0 ? (
                             <p className="mt-2 text-xs text-slate-500">条件内に優先候補はありません。</p>
                           ) : (
-                            <div className="mt-2 grid gap-2 xl:grid-cols-[minmax(0,1.4fr)_minmax(18rem,1fr)]">
+                            <div className="mt-1.5 grid gap-1.5 xl:grid-cols-[minmax(0,1.45fr)_minmax(17rem,0.95fr)]">
                               <FeaturedFocusTaskCard
                                 task={todayFocusTasks[0].task}
                                 title={todayFocusTasks[0].task.title}
@@ -3120,7 +3120,7 @@ export function KanbanBoard({
                                 timeDisplayNow={clockNow}
                                 disabled={updatingTaskId === todayFocusTasks[0].task.id}
                               />
-                              <div className="grid gap-2">
+                              <div className="grid gap-1.5">
                                 {todayFocusTasks.slice(1).map((item) => (
                                   <FocusTaskCard
                                     key={item.task.id}
@@ -3149,12 +3149,12 @@ export function KanbanBoard({
                           )}
                         </section>
 
-                        <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                        <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
                           <div className="flex items-center justify-between gap-2">
                             <h3 className="text-sm font-semibold text-slate-900">止まり案件</h3>
                             <span className="text-[11px] text-slate-500">危険順に自動整列</span>
                           </div>
-                          <div className="mt-2 flex flex-wrap gap-2">
+                          <div className="mt-1.5 flex flex-wrap gap-1.5">
                             {stalledTaskQuickSelections.map((preset) => (
                               <QuickSelectButton
                                 key={preset.key}
@@ -3165,7 +3165,7 @@ export function KanbanBoard({
                               />
                             ))}
                           </div>
-                          <div className="mt-2 space-y-2">
+                          <div className="mt-1.5 space-y-1.5">
                             {stalledTasks.length === 0 ? (
                               <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-5 text-xs text-slate-500">止まり案件はありません。</p>
                             ) : (
@@ -3187,7 +3187,7 @@ export function KanbanBoard({
                         </section>
                       </div>
 
-                      <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 sm:gap-2 sm:px-3 sm:py-2">
                         <span className="text-xs font-medium text-slate-600">クイック選択</span>
                         {todayQuickSelections.map((preset) => (
                           <QuickSelectButton
@@ -3201,42 +3201,37 @@ export function KanbanBoard({
                       </div>
                     </>
                   ) : (
-                    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(20rem,0.95fr)]">
-                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-3 xl:col-span-2">
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div>
-                            <h3 className="text-sm font-semibold text-slate-900">Reviewサマリーバー</h3>
-                            <p className="mt-1 text-xs text-slate-500">止まり理由と優先順を一目で見て、そのまま処理に入れるバーです。</p>
+                    <div className="grid gap-2 xl:grid-cols-[minmax(0,1.7fr)_minmax(18rem,1fr)]">
+                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3 xl:col-span-2">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                              <h3 className="text-sm font-semibold text-slate-900">Reviewサマリーバー</h3>
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 sm:px-2.5 sm:text-[11px]">処理対象 {reviewTaskQueue.length + reviewProjects.length}件</span>
+                            </div>
+                            <p className="mt-0.5 text-[11px] text-slate-500">止まり理由をまとめて確認し、そのまま処理に入れます。</p>
                           </div>
-                          <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">処理対象 {reviewTaskQueue.length + reviewProjects.length}件</span>
                         </div>
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+                        <div className="mt-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-5">
                           <CompactContextStat label="停滞件数" value={`${reviewSummary.stalledCount}件`} danger={reviewSummary.stalledCount > 0} />
                           <CompactContextStat label="Waiting期限超過" value={`${reviewSummary.waitingOverdueCount}件`} danger={reviewSummary.waitingOverdueCount > 0} />
                           <CompactContextStat label="待ち日付未設定" value={`${reviewSummary.waitingNoDateCount}件`} danger={reviewSummary.waitingNoDateCount > 0} />
                           <CompactContextStat label="次アクション未設定PJ" value={`${reviewSummary.projectNoActionCount}件`} danger={reviewSummary.projectNoActionCount > 0} />
                           <CompactContextStat label="進行中(WIP)" value={`${reviewSummary.wipCount}件`} />
                         </div>
+                        <div className="mt-2 grid gap-1.5 lg:grid-cols-3">
+                          <ReviewHintCard label="タスク" value={`${reviewTaskQueue.length}件`} detail={reviewTaskProjectCount > 0 ? `project連動 ${reviewTaskProjectCount}件` : '止まり理由を見て1件ずつ片付け'} tone="warning" />
+                          <ReviewHintCard label="プロジェクト" value={`${reviewProjects.length}件`} detail={reviewSummary.projectNoActionCount > 0 ? `次アクション未設定 ${reviewSummary.projectNoActionCount}件` : '未設定の next action はありません'} tone="info" />
+                          <ReviewHintCard label="推奨順" value="1→2→3" detail="回答超過 → 待ち日付未設定 → 次アクション未設定PJ" tone="danger" />
+                        </div>
                       </section>
 
-                      <aside className="rounded-xl border border-slate-200 bg-white p-3">
-                        <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-slate-900">Reviewの見どころ</h3>
-                          <span className="text-[11px] text-slate-500">情報追加なしで整理</span>
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          <ReviewHintCard label="タスク" value={`${reviewTaskQueue.length}件`} detail={reviewTaskProjectCount > 0 ? `うち ${reviewTaskProjectCount}件が project 連動` : '止まり理由を見て1件ずつ片付け'} tone="warning" />
-                          <ReviewHintCard label="プロジェクト" value={`${reviewProjects.length}件`} detail={reviewSummary.projectNoActionCount > 0 ? `次アクション未設定 ${reviewSummary.projectNoActionCount}件` : '未設定の next action はありません'} tone="info" />
-                          <ReviewHintCard label="推奨順" value="1→2→3" detail="回答超過 → 待ち日付未設定 → 次アクション未設定PJ の順で処理" tone="danger" />
-                        </div>
-                      </aside>
-
-                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
                         <div className="flex items-center justify-between gap-2">
                           <h3 className="text-sm font-semibold text-slate-900">止まり案件を順に処理</h3>
                           <span className="text-[11px] text-slate-500">危険順に表示</span>
                         </div>
-                        <div className="mt-3 space-y-2">
+                        <div className="mt-2 space-y-1.5">
                           {reviewTaskQueue.length === 0 ? (
                             <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-5 text-xs text-slate-500">Review対象のタスクはありません。</p>
                           ) : (
@@ -3262,12 +3257,12 @@ export function KanbanBoard({
                         </div>
                       </section>
 
-                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
                         <div className="flex items-center justify-between gap-2">
                           <h3 className="text-sm font-semibold text-slate-900">次アクション未設定 / 要確認プロジェクト</h3>
                           <span className="text-[11px] text-slate-500">project を止めないための導線</span>
                         </div>
-                        <div className="mt-3 space-y-2">
+                        <div className="mt-2 space-y-1.5">
                           {reviewProjects.length === 0 ? (
                             <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-5 text-xs text-slate-500">要確認のプロジェクトはありません。</p>
                           ) : (
@@ -3767,7 +3762,7 @@ function QuickSelectButton({
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-medium text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
+      className="rounded-full border border-slate-300 bg-white px-2.5 py-0.5 text-[11px] font-medium text-slate-700 transition hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 disabled:cursor-not-allowed disabled:opacity-50"
     >
       {label} {count}件
     </button>
@@ -3824,7 +3819,7 @@ function TodayReviewModeToggle({
   onChange: (mode: TodayScreenMode) => void;
 }) {
   return (
-    <div className="inline-flex items-center rounded-2xl border border-slate-200 bg-slate-50 p-1 shadow-sm">
+    <div className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-50 p-0.5 shadow-sm">
       {([
         { key: 'today', label: 'Today', detail: '実行モード' },
         { key: 'review', label: 'Review', detail: '整理・解消モード' },
@@ -3835,12 +3830,12 @@ function TodayReviewModeToggle({
             key={item.key}
             type="button"
             onClick={() => onChange(item.key)}
-            className={`rounded-xl px-3 py-2 text-left transition ${
+            className={`rounded-lg px-2.5 py-1.5 text-left transition sm:px-3 sm:py-2 ${
               active ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            <div className="text-sm font-semibold">{item.label}</div>
-            <div className="text-[11px]">{item.detail}</div>
+            <div className="text-xs font-semibold sm:text-sm">{item.label}</div>
+            <div className="text-[10px] sm:text-[11px]">{item.detail}</div>
           </button>
         );
       })}
@@ -3867,12 +3862,12 @@ function ReviewHintCard({
         : 'border-blue-200 bg-blue-50 text-blue-700';
 
   return (
-    <article className="rounded-xl border border-slate-200 bg-slate-50/70 p-3 shadow-sm">
+    <article className="rounded-xl border border-slate-200 bg-slate-50/70 px-2.5 py-2 shadow-sm">
       <div className="flex items-center justify-between gap-2">
         <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${toneClassName}`}>{label}</span>
         <span className="text-sm font-semibold text-slate-900">{value}</span>
       </div>
-      <p className="mt-2 text-xs leading-5 text-slate-600">{detail}</p>
+      <p className="mt-1 text-[11px] leading-4 text-slate-600">{detail}</p>
     </article>
   );
 }
@@ -3914,7 +3909,7 @@ function ReviewTaskCard({
         : 'border-blue-200 bg-blue-50 text-blue-700';
 
   return (
-    <article className={`rounded-xl border p-3 shadow-sm ${tone === 'danger' ? 'border-rose-200 bg-rose-50/70' : tone === 'warning' ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-white'}`}>
+    <article className={`rounded-xl border p-2.5 shadow-sm ${tone === 'danger' ? 'border-rose-200 bg-rose-50/70' : tone === 'warning' ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-white'}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -3923,10 +3918,10 @@ function ReviewTaskCard({
             <span className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">{TASK_PROGRESS_LABELS[task.status]}</span>
             {projectTitle ? <span className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600">Project: {projectTitle}</span> : null}
           </div>
-          <p className="mt-2 text-sm font-semibold text-slate-900">{task.title}</p>
-          <p className="mt-1 text-xs leading-5 text-slate-600">{detail}</p>
+          <p className="mt-1.5 text-sm font-semibold text-slate-900">{task.title}</p>
+          <p className="mt-1 text-[11px] leading-4 text-slate-600">{detail}</p>
         </div>
-        <div className="flex flex-wrap gap-2" data-no-card-click="true">
+        <div className="flex flex-wrap gap-1.5" data-no-card-click="true">
           <button type="button" onClick={onOpen} disabled={disabled} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">開く</button>
           <button type="button" onClick={onDone} disabled={disabled} className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">完了</button>
           <button type="button" onClick={onWaiting} disabled={disabled} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">待ち＋日付</button>
@@ -3959,7 +3954,7 @@ function ReviewProjectCard({
         : 'border-blue-200 bg-blue-50 text-blue-700';
 
   return (
-    <article className={`rounded-xl border p-3 shadow-sm ${item.tone === 'danger' ? 'border-rose-200 bg-rose-50/70' : item.tone === 'warning' ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-white'}`}>
+    <article className={`rounded-xl border p-2.5 shadow-sm ${item.tone === 'danger' ? 'border-rose-200 bg-rose-50/70' : item.tone === 'warning' ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-white'}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -3967,10 +3962,10 @@ function ReviewProjectCard({
             <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${toneClassName}`}>{item.reason}</span>
             <span className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-slate-500 ring-1 ring-slate-200">{item.project.nextActionCount}件の次アクション</span>
           </div>
-          <p className="mt-2 text-sm font-semibold text-slate-900">{item.project.title}</p>
-          <p className="mt-1 text-xs leading-5 text-slate-600">{item.detail}</p>
+          <p className="mt-1.5 text-sm font-semibold text-slate-900">{item.project.title}</p>
+          <p className="mt-1 text-[11px] leading-4 text-slate-600">{item.detail}</p>
         </div>
-        <div className="flex flex-wrap gap-2" data-no-card-click="true">
+        <div className="flex flex-wrap gap-1.5" data-no-card-click="true">
           <button type="button" onClick={onOpen} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">開く</button>
           <button type="button" onClick={onAddNextAction} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 transition hover:bg-blue-100">次アクション追加</button>
           <button type="button" onClick={onPromoteToToday} className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700 transition hover:bg-amber-100">今日候補</button>
@@ -3995,11 +3990,11 @@ function CompactContextStat({
   const trailing = match?.[2] ?? '';
 
   return (
-    <article className={`rounded-xl px-3 py-1.5 shadow-sm ring-1 ${danger ? 'bg-rose-50 ring-rose-200/90' : 'bg-slate-50 ring-slate-200/80'}`}>
+    <article className={`rounded-xl px-2.5 py-1 shadow-sm ring-1 ${danger ? 'bg-rose-50 ring-rose-200/90' : 'bg-slate-50 ring-slate-200/80'}`}>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[11px] text-slate-600">{label}</p>
+        <p className="text-[10px] text-slate-600 sm:text-[11px]">{label}</p>
         <p className={`flex items-baseline gap-0.5 tabular-nums ${danger ? 'text-rose-700' : 'text-slate-900'}`}>
-          <span className="text-lg font-semibold tracking-tight">{leading}</span>
+          <span className="text-base font-semibold tracking-tight sm:text-lg">{leading}</span>
           <span className="text-[11px] font-medium text-slate-500">{trailing}</span>
         </p>
       </div>
@@ -4010,7 +4005,7 @@ function CompactContextStat({
 function FilterChip({ label, subtle = false }: { label: string; subtle?: boolean }) {
   return (
     <span
-      className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${
+      className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-medium ${
         subtle ? 'bg-slate-100 text-slate-600' : 'bg-blue-600 text-white'
       }`}
     >
