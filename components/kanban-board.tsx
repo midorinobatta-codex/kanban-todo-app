@@ -22,6 +22,8 @@ import {
   TASK_IMPORTANCE_VALUES,
   TASK_PROGRESS_LABELS,
   TASK_PROGRESS_ORDER,
+  TASK_TEMPLATE_RECURRENCE_LABELS,
+  TASK_TEMPLATE_RECURRENCE_VALUES,
   TASK_URGENCY_VALUES,
   URGENCY_LABELS,
   type Task,
@@ -29,6 +31,8 @@ import {
   type TaskImportance,
   type TaskPriority,
   type TaskProgress,
+  type TaskTemplate,
+  type TaskTemplateRecurrence,
   type TaskUrgency,
   type WorkSessionEntry,
 } from '@/lib/types';
@@ -47,7 +51,6 @@ import {
   isWaitingResponseOverdue,
   isWaitingResponseToday,
   isWaitingWithoutResponseDate,
-  normalizeDateValue,
 } from '@/lib/tasks/presentation';
 import { buildHistoryRows, buildTaskExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
@@ -62,8 +65,11 @@ import {
   summarizeDailyReview,
   type DailyReviewSummary,
 } from '@/lib/tasks/time-tracking';
+import { parseQuickCaptureInput } from '@/lib/tasks/quick-capture';
+import { compareTasksByDuePriority } from '@/lib/tasks/task-ordering';
+import { getTaskTemplatePeriodKey, shouldGenerateTaskTemplateForDate } from '@/lib/tasks/task-templates';
 
-const BOARD_PREFERENCES_KEY = 'kanban-board-preferences-v1';
+const BOARD_PREFERENCES_KEY = 'kanban-board-preferences-v2';
 const DAILY_REVIEW_NOTE_KEY_PREFIX = 'flowfocus-daily-review-note-';
 const WEEKLY_REVIEW_NOTE_KEY_PREFIX = 'flowfocus-weekly-review-note-';
 
@@ -77,6 +83,13 @@ const defaultNewTaskState = {
   dueDate: '',
   gtdCategory: 'next_action' as TaskGtdCategory,
   projectTaskId: '',
+};
+
+const defaultNewTemplateState = {
+  title: '',
+  description: '',
+  recurrenceType: 'weekly' as TaskTemplateRecurrence,
+  defaultGtdCategory: 'next_action' as Exclude<TaskGtdCategory, 'project'>,
 };
 
 const levelClassName = {
@@ -111,7 +124,9 @@ type TodayGroupKey =
   | 'projectLinked'
   | 'other';
 
-type TaskSortKey = 'newest' | 'dueSoon' | 'importanceHigh' | 'urgencyHigh';
+type TaskSortKey = 'dueSoon' | 'newest' | 'importanceHigh' | 'urgencyHigh';
+
+type BoardUtilityPanel = 'task' | 'template' | null;
 
 type BoardPreferences = {
   keyword: string;
@@ -126,7 +141,7 @@ type BoardPreferences = {
 
 const TASK_SORT_LABELS: Record<TaskSortKey, string> = {
   newest: '新しい順',
-  dueSoon: '期限が近い順',
+  dueSoon: '期限順（標準）',
   importanceHigh: '重要度高い順',
   urgencyHigh: '緊急度高い順',
 };
@@ -188,10 +203,16 @@ function sortTasks(tasks: Task[], sortKey: TaskSortKey) {
   const copied = [...tasks];
 
   copied.sort((a, b) => {
-    switch (sortKey) {
-      case 'dueSoon':
-        return normalizeDateValue(a.due_date) - normalizeDateValue(b.due_date);
+    if (sortKey === 'dueSoon') {
+      return compareTasksByDuePriority(a, b);
+    }
 
+    const duePriority = compareTasksByDuePriority(a, b);
+    if (duePriority !== 0) {
+      return duePriority;
+    }
+
+    switch (sortKey) {
       case 'importanceHigh':
         return sortWeight[a.importance] - sortWeight[b.importance];
 
@@ -634,11 +655,19 @@ export function KanbanBoard({
   const [gtdFilter, setGtdFilter] = useState<'all' | TaskGtdCategory>('all');
   const [importanceFilter, setImportanceFilter] = useState<'all' | TaskImportance>('all');
   const [urgencyFilter, setUrgencyFilter] = useState<'all' | TaskUrgency>('all');
-  const [sortKey, setSortKey] = useState<TaskSortKey>('newest');
+  const [sortKey, setSortKey] = useState<TaskSortKey>('dueSoon');
   const [viewMode, setViewMode] = useState<ViewMode>('kanban');
   const [showSomedayInNormalViews, setShowSomedayInNormalViews] = useState(false);
   const [projectFilterId, setProjectFilterId] = useState('all');
   const [newTask, setNewTask] = useState(defaultNewTaskState);
+  const [quickCaptureInput, setQuickCaptureInput] = useState('');
+  const [quickCaptureSaving, setQuickCaptureSaving] = useState(false);
+  const [templateForm, setTemplateForm] = useState(defaultNewTemplateState);
+  const [templates, setTemplates] = useState<TaskTemplate[]>([]);
+  const [templatesReady, setTemplatesReady] = useState(false);
+  const [savingTemplate, setSavingTemplate] = useState(false);
+  const [syncingTemplates, setSyncingTemplates] = useState(false);
+  const [activeUtilityPanel, setActiveUtilityPanel] = useState<BoardUtilityPanel>(null);
   const [preferencesReady, setPreferencesReady] = useState(false);
   const [expandedProjectIds, setExpandedProjectIds] = useState<Record<string, boolean>>({});
   const [selectionMode, setSelectionMode] = useState(false);
@@ -649,6 +678,10 @@ export function KanbanBoard({
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
   const { projects } = useProjects();
+  const activeTemplates = useMemo(
+    () => templates.filter((template) => template.is_active),
+    [templates],
+  );
 
   const todayKey = useMemo(() => getLocalDateKey(new Date(clockNow)), [clockNow]);
   const weekWindow = useMemo(() => getWeekWindow(new Date(clockNow)), [clockNow]);
@@ -711,6 +744,19 @@ export function KanbanBoard({
     setAdjustmentMinutesInput('');
     setAdjustmentNote('');
   }, [adjustingTask?.id]);
+
+  useEffect(() => {
+    if (!activeUtilityPanel) return;
+
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveUtilityPanel(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeUtilityPanel]);
 
   useEffect(() => {
     try {
@@ -838,10 +884,27 @@ export function KanbanBoard({
     setWorkSessions((data as WorkSessionEntry[]) ?? []);
   }, [userId]);
 
+  const fetchTemplates = useCallback(async () => {
+    const { data, error: fetchError } = await getSupabaseClient()
+      .from('task_templates')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+
+    if (fetchError) {
+      setError(fetchError.message);
+    } else {
+      setTemplates((data as TaskTemplate[]) ?? []);
+    }
+
+    setTemplatesReady(true);
+  }, [userId]);
+
   useEffect(() => {
     void fetchTasks();
     void fetchWorkSessions();
-  }, [fetchTasks, fetchWorkSessions]);
+    void fetchTemplates();
+  }, [fetchTasks, fetchTemplates, fetchWorkSessions]);
 
   useEffect(() => {
     if (projectFilterId === 'all') return;
@@ -1077,17 +1140,6 @@ export function KanbanBoard({
     return viewMode === 'gtd' ? filteredTasks : visibleTasksForNormalViews;
   }, [filteredTasks, viewMode, visibleTasksForNormalViews]);
 
-  const visibleTimeSummary = useMemo(() => {
-    return exportableTasks.reduce(
-      (acc, task) => {
-        acc.trackedMinutes += task.tracked_minutes ?? 0;
-        acc.adjustmentMinutes += task.manual_adjustment_minutes ?? 0;
-        acc.totalMinutes += getEffectiveTaskMinutes(task);
-        return acc;
-      },
-      { trackedMinutes: 0, adjustmentMinutes: 0, totalMinutes: 0 },
-    );
-  }, [exportableTasks]);
 
   const handleExportVisibleTasksCsv = useCallback(() => {
     downloadCsv(`board-${viewMode}-tasks`, buildTaskExportRows(exportableTasks, projectTaskMap));
@@ -1285,29 +1337,9 @@ export function KanbanBoard({
 
   const boardAlertItems = useMemo(() => {
     const items: AlertStripItem[] = [];
-    const dueSoonCount = visibleTasksForNormalViews.filter(
-      (task) => task.status !== 'done' && isDueSoon(task.due_date),
-    ).length;
-    const waitingNoDateCount = visibleTasksForNormalViews.filter((task) => isWaitingWithoutResponseDate(task)).length;
-    const stalledCount =
-      stalledTaskBuckets.waitingOverdue.length +
-      stalledTaskBuckets.waitingNoDate.length +
-      stalledTaskBuckets.doingStale.length;
     const missingStartProjectCount = projects.filter((project) => !project.startedAt).length;
     const missingDueProjectCount = projects.filter((project) => !project.dueDate).length;
     const projectWithoutActionCount = projects.filter((project) => project.nextActionCount === 0).length;
-
-    if (viewMode !== 'today' && dueSoonCount > 0) {
-      items.push({ id: 'due-soon', label: '期限接近', count: `${dueSoonCount}件`, tone: 'warning' });
-    }
-
-    if (viewMode !== 'today' && waitingNoDateCount > 0) {
-      items.push({ id: 'waiting-no-date', label: '待ち日付未設定', count: `${waitingNoDateCount}件`, tone: 'warning' });
-    }
-
-    if (stalledCount > 0) {
-      items.push({ id: 'stalled', label: '止まり候補', count: `${stalledCount}件`, tone: 'danger' });
-    }
 
     if (missingStartProjectCount > 0) {
       items.push({
@@ -1340,7 +1372,7 @@ export function KanbanBoard({
     }
 
     return items;
-  }, [projects, stalledTaskBuckets, viewMode, visibleTasksForNormalViews]);
+  }, [projects]);
 
   const stalledTaskQuickSelections = useMemo(
     () => [
@@ -1416,6 +1448,265 @@ export function KanbanBoard({
 
     setSaving(false);
   };
+
+  const syncTemplateTasks = useCallback(
+    async (source: 'auto' | 'manual' = 'manual', targetTemplates?: TaskTemplate[]) => {
+      const currentTemplates = (targetTemplates ?? activeTemplates).filter((template) =>
+        shouldGenerateTaskTemplateForDate(template),
+      );
+
+      if (currentTemplates.length === 0) {
+        if (source === 'manual') {
+          setNotice('今日生成する定型タスクはありません。');
+        }
+        return 0;
+      }
+
+      setSyncingTemplates(true);
+      setError(null);
+      if (source === 'manual') {
+        setNotice(null);
+      }
+
+      const supabase = getSupabaseClient();
+      const templateIds = currentTemplates.map((template) => template.id);
+      const periodKeys = Array.from(
+        new Set(currentTemplates.map((template) => getTaskTemplatePeriodKey(template.recurrence_type))),
+      );
+
+      const { data: existingRows, error: existingError } = await supabase
+        .from('tasks')
+        .select('template_id, template_period_key')
+        .eq('user_id', userId)
+        .in('template_id', templateIds)
+        .in('template_period_key', periodKeys);
+
+      if (existingError) {
+        setError(existingError.message);
+        setSyncingTemplates(false);
+        return 0;
+      }
+
+      const existingKeys = new Set(
+        ((existingRows as Array<{ template_id: string | null; template_period_key: string | null }> | null) ?? [])
+          .filter((row) => row.template_id && row.template_period_key)
+          .map((row) => `${row.template_id}:${row.template_period_key}`),
+      );
+
+      const records = currentTemplates
+        .map((template) => ({
+          template,
+          periodKey: getTaskTemplatePeriodKey(template.recurrence_type),
+        }))
+        .filter(({ template, periodKey }) => !existingKeys.has(`${template.id}:${periodKey}`))
+        .map(({ template, periodKey }) => ({
+          user_id: userId,
+          title: template.title,
+          description: template.description || null,
+          assignee: '自分',
+          priority: 'medium',
+          importance: 'medium',
+          urgency: 'medium',
+          status: 'todo',
+          gtd_category: template.default_gtd_category,
+          project_task_id: null,
+          due_date: null,
+          waiting_response_date: null,
+          template_id: template.id,
+          template_period_key: periodKey,
+        }));
+
+      if (records.length === 0) {
+        if (source === 'manual') {
+          setNotice('今日分の定型タスクはすでに生成済みです。');
+        }
+        setSyncingTemplates(false);
+        return 0;
+      }
+
+      const { data: insertedRows, error: insertError } = await supabase
+        .from('tasks')
+        .insert(records)
+        .select('*');
+
+      if (insertError) {
+        const duplicateInsert = insertError.message.toLowerCase().includes('duplicate');
+        if (!duplicateInsert || source === 'manual') {
+          setError(insertError.message);
+        }
+        await fetchTasks(true);
+        setSyncingTemplates(false);
+        return 0;
+      }
+
+      const insertedTasks = (insertedRows as Task[]) ?? [];
+      if (insertedTasks.length > 0) {
+        setTasks((prev) => [...insertedTasks, ...prev]);
+        appendHistoryEntry({
+          scope: 'board',
+          action: 'generate_template_tasks',
+          summary: `定型タスクを生成 ${insertedTasks.length}件`,
+          detail: currentTemplates.slice(0, 3).map((template) => template.title).join(' / '),
+          tone: 'success',
+        });
+      }
+
+      if (source === 'manual') {
+        setNotice(`定型タスクを ${insertedTasks.length}件 生成しました。`);
+      }
+
+      setSyncingTemplates(false);
+      return insertedTasks.length;
+    },
+    [activeTemplates, appendHistoryEntry, fetchTasks, userId],
+  );
+
+  useEffect(() => {
+    if (!templatesReady) return;
+    void syncTemplateTasks('auto');
+  }, [syncTemplateTasks, templatesReady, todayKey]);
+
+  const addQuickCapturedTask = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      const parsed = parseQuickCaptureInput(quickCaptureInput, { allowGtdCommands: true });
+      if (!parsed.title) {
+        setError('タイトルを入力してください。');
+        return;
+      }
+
+      setQuickCaptureSaving(true);
+      setError(null);
+      setNotice(null);
+
+      const { data, error: insertError } = await getSupabaseClient()
+        .from('tasks')
+        .insert({
+          user_id: userId,
+          title: parsed.title,
+          description: null,
+          assignee: '自分',
+          priority: 'medium',
+          importance: 'medium',
+          urgency: 'medium',
+          status: parsed.status,
+          gtd_category: parsed.gtdCategory,
+          project_task_id: null,
+          due_date: parsed.dueDate,
+          waiting_response_date: parsed.waitingResponseDate,
+        })
+        .select('*')
+        .single();
+
+      if (insertError) {
+        setError(insertError.message);
+      } else {
+        setTasks((prev) => [data as Task, ...prev]);
+        setQuickCaptureInput('');
+        setNotice(`クイック追加: 「${parsed.title}」を保存しました。`);
+        appendHistoryEntry({
+          scope: 'board',
+          action: 'quick_capture',
+          summary: `クイック追加: ${parsed.title}`,
+          detail: parsed.appliedTags.length > 0 ? parsed.appliedTags.join(' / ') : 'タイトルのみ',
+          tone: 'success',
+        });
+      }
+
+      setQuickCaptureSaving(false);
+    },
+    [appendHistoryEntry, quickCaptureInput, userId],
+  );
+
+  const createTemplate = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+
+      const title = templateForm.title.trim();
+      if (!title) {
+        setError('テンプレート名を入力してください。');
+        return;
+      }
+
+      setSavingTemplate(true);
+      setError(null);
+      setNotice(null);
+
+      const { data, error: insertError } = await getSupabaseClient()
+        .from('task_templates')
+        .insert({
+          user_id: userId,
+          title,
+          description: templateForm.description.trim() || null,
+          recurrence_type: templateForm.recurrenceType,
+          default_gtd_category: templateForm.defaultGtdCategory,
+          start_date: todayKey,
+          is_active: true,
+        })
+        .select('*')
+        .single();
+
+      if (insertError) {
+        setError(insertError.message);
+        setSavingTemplate(false);
+        return;
+      }
+
+      const insertedTemplate = data as TaskTemplate;
+      setTemplates((prev) => [insertedTemplate, ...prev]);
+      setTemplateForm(defaultNewTemplateState);
+      setNotice(`定型業務テンプレート「${insertedTemplate.title}」を追加しました。`);
+      appendHistoryEntry({
+        scope: 'board',
+        action: 'create_template',
+        summary: `定型テンプレート追加: ${insertedTemplate.title}`,
+        detail: `${TASK_TEMPLATE_RECURRENCE_LABELS[insertedTemplate.recurrence_type]} / GTD ${TASK_GTD_LABELS[insertedTemplate.default_gtd_category]}`,
+        tone: 'success',
+      });
+      setSavingTemplate(false);
+      await syncTemplateTasks('manual', [insertedTemplate]);
+    },
+    [appendHistoryEntry, syncTemplateTasks, templateForm, todayKey, userId],
+  );
+
+  const toggleTemplateActive = useCallback(
+    async (template: TaskTemplate) => {
+      setSyncingTemplates(true);
+      setError(null);
+      setNotice(null);
+
+      const { data, error: updateError } = await getSupabaseClient()
+        .from('task_templates')
+        .update({ is_active: !template.is_active })
+        .eq('id', template.id)
+        .select('*')
+        .single();
+
+      if (updateError) {
+        setError(updateError.message);
+        setSyncingTemplates(false);
+        return;
+      }
+
+      const updatedTemplate = data as TaskTemplate;
+      setTemplates((prev) => prev.map((item) => (item.id === template.id ? updatedTemplate : item)));
+      setNotice(
+        updatedTemplate.is_active
+          ? `「${updatedTemplate.title}」を有効化しました。`
+          : `「${updatedTemplate.title}」を停止しました。`,
+      );
+      appendHistoryEntry({
+        scope: 'board',
+        action: 'toggle_template',
+        summary: `${updatedTemplate.is_active ? '有効化' : '停止'}: ${updatedTemplate.title}`,
+        detail: TASK_TEMPLATE_RECURRENCE_LABELS[updatedTemplate.recurrence_type],
+        tone: 'info',
+      });
+      setSyncingTemplates(false);
+    },
+    [appendHistoryEntry],
+  );
 
   const updateStatus = async (task: Task, status: TaskProgress) => {
     if (task.status === status) return;
@@ -2001,7 +2292,7 @@ export function KanbanBoard({
     setGtdFilter('all');
     setImportanceFilter('all');
     setUrgencyFilter('all');
-    setSortKey('newest');
+    setSortKey('dueSoon');
     setViewMode('kanban');
     setShowSomedayInNormalViews(false);
     setProjectFilterId('all');
@@ -2086,8 +2377,20 @@ export function KanbanBoard({
         </section>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
-        <aside className="space-y-6 xl:sticky xl:top-32 xl:self-start">
+      {error ? (
+        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          {error}
+        </p>
+      ) : null}
+
+      {notice ? (
+        <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+          {notice}
+        </p>
+      ) : null}
+
+      <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
+        <aside className="order-2 space-y-6 xl:order-1 xl:sticky xl:top-32 xl:self-start">
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -2210,149 +2513,358 @@ export function KanbanBoard({
               ) : null}
             </div>
           </section>
-
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
-            <h2 className="text-lg font-semibold text-slate-900">タスク追加</h2>
-
-            <form onSubmit={(e) => void addTask(e)} className="mt-4 space-y-3">
-              <input
-                required
-                value={newTask.title}
-                onChange={(e) => setNewTask((prev) => ({ ...prev, title: e.target.value }))}
-                placeholder="タイトル"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-
-              <input
-                value={newTask.assignee}
-                onChange={(e) => setNewTask((prev) => ({ ...prev, assignee: e.target.value }))}
-                placeholder="担当者"
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-
-              <textarea
-                value={newTask.description}
-                onChange={(e) => setNewTask((prev) => ({ ...prev, description: e.target.value }))}
-                placeholder="説明"
-                rows={4}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-
-              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-1">
-                <select
-                  value={newTask.importance}
-                  onChange={(e) =>
-                    setNewTask((prev) => ({
-                      ...prev,
-                      importance: e.target.value as TaskImportance,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  {TASK_IMPORTANCE_VALUES.map((importance) => (
-                    <option key={importance} value={importance}>
-                      重要度: {IMPORTANCE_LABELS[importance]}
-                    </option>
-                  ))}
-                </select>
-
-                <select
-                  value={newTask.urgency}
-                  onChange={(e) =>
-                    setNewTask((prev) => ({
-                      ...prev,
-                      urgency: e.target.value as TaskUrgency,
-                    }))
-                  }
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  {TASK_URGENCY_VALUES.map((urgency) => (
-                    <option key={urgency} value={urgency}>
-                      緊急度: {URGENCY_LABELS[urgency]}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <input
-                type="date"
-                value={newTask.dueDate}
-                onChange={(e) => setNewTask((prev) => ({ ...prev, dueDate: e.target.value }))}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              />
-
-              <select
-                value={newTask.gtdCategory}
-                onChange={(e) =>
-                  setNewTask((prev) => {
-                    const gtdCategory = e.target.value as TaskGtdCategory;
-                    return {
-                      ...prev,
-                      gtdCategory,
-                      projectTaskId: gtdCategory === 'next_action' ? prev.projectTaskId : '',
-                    };
-                  })
-                }
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-              >
-                {TASK_GTD_VALUES.map((category) => (
-                  <option key={category} value={category}>
-                    GTD: {TASK_GTD_LABELS[category]}
-                  </option>
-                ))}
-              </select>
-
-              {newTask.gtdCategory === 'next_action' ? (
-                <select
-                  value={newTask.projectTaskId}
-                  onChange={(e) =>
-                    setNewTask((prev) => ({ ...prev, projectTaskId: e.target.value }))
-                  }
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="">関連プロジェクト: 未設定</option>
-                  {projectTasks.map((projectTask) => (
-                    <option key={projectTask.id} value={projectTask.id}>
-                      関連プロジェクト: {projectTask.title}
-                    </option>
-                  ))}
-                </select>
-              ) : null}
-
-              <button
-                type="submit"
-                disabled={saving}
-                className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-              >
-                {saving ? '保存中...' : 'タスクを追加'}
-              </button>
-            </form>
-          </section>
-
-          {error ? (
-            <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {error}
-            </p>
-          ) : null}
-
-          {notice ? (
-            <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-              {notice}
-            </p>
-          ) : null}
-
-          <HistoryPanel
-            entries={boardHistoryEntries}
-            onClear={clearHistoryEntries}
-            onExportCsv={handleExportHistoryCsv}
-            onExportJson={handleExportHistoryJson}
-            title="履歴"
-            emptyLabel="まだ履歴はありません。タスク追加や一括操作を行うとここに残ります。"
-          />
         </aside>
 
-        <section className="space-y-6">
+        <section className="order-1 space-y-6 xl:order-2">
           <div className="sticky top-28 z-30 space-y-1.5">
+            <div className="relative">
+              <section className="rounded-2xl border border-slate-200 bg-white/95 px-3 py-2.5 shadow-sm backdrop-blur">
+                <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <form
+                      onSubmit={(e) => void addQuickCapturedTask(e)}
+                      className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center"
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-700">
+                          クイック追加
+                        </span>
+                        <span className="hidden text-[11px] text-slate-500 lg:inline">
+                          /wait /next /project /someday / 2026-03-25 / 明日
+                        </span>
+                      </div>
+                      <input
+                        value={quickCaptureInput}
+                        onChange={(e) => setQuickCaptureInput(e.target.value)}
+                        placeholder="+ タイトルだけでEnter保存。必要なら /wait /next を付ける"
+                        className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
+                      />
+                      <button
+                        type="submit"
+                        disabled={quickCaptureSaving}
+                        className="shrink-0 rounded-lg bg-slate-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        {quickCaptureSaving ? '保存中...' : '保存'}
+                      </button>
+                    </form>
+                  </div>
+
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveUtilityPanel((prev) => (prev === 'task' ? null : 'task'))}
+                      aria-expanded={activeUtilityPanel === 'task'}
+                      className={`rounded-lg border px-3.5 py-2.5 text-sm font-medium transition ${
+                        activeUtilityPanel === 'task'
+                          ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      通常追加
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveUtilityPanel((prev) => (prev === 'template' ? null : 'template'))}
+                      aria-expanded={activeUtilityPanel === 'template'}
+                      className={`rounded-lg border px-3.5 py-2.5 text-sm font-medium transition ${
+                        activeUtilityPanel === 'template'
+                          ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-500'
+                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                      }`}
+                    >
+                      定型
+                    </button>
+                  </div>
+                </div>
+              </section>
+
+              {activeUtilityPanel ? (
+                <>
+                  <div
+                    className="fixed inset-0 z-30 bg-slate-900/10"
+                    onClick={() => setActiveUtilityPanel(null)}
+                  />
+                  <div className="absolute inset-x-0 top-full z-40 mt-2 xl:left-auto xl:right-0 xl:w-[56rem]">
+                    {activeUtilityPanel === 'task' ? (
+                      <section className="max-h-[75vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                          <div>
+                            <h2 className="text-base font-semibold text-slate-900">通常追加</h2>
+                            <p className="mt-1 text-xs text-slate-500">既存フォームはそのまま使えます。必要な時だけ開く構成です。</p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setActiveUtilityPanel(null)}
+                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                          >
+                            閉じる
+                          </button>
+                        </div>
+
+                        <form onSubmit={(e) => void addTask(e)} className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
+                          <div className="space-y-3">
+                            <input
+                              required
+                              value={newTask.title}
+                              onChange={(e) => setNewTask((prev) => ({ ...prev, title: e.target.value }))}
+                              placeholder="タイトル"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+
+                            <input
+                              value={newTask.assignee}
+                              onChange={(e) => setNewTask((prev) => ({ ...prev, assignee: e.target.value }))}
+                              placeholder="担当者"
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+
+                            <textarea
+                              value={newTask.description}
+                              onChange={(e) => setNewTask((prev) => ({ ...prev, description: e.target.value }))}
+                              placeholder="説明"
+                              rows={4}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+
+                          <div className="space-y-3">
+                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                              <select
+                                value={newTask.importance}
+                                onChange={(e) =>
+                                  setNewTask((prev) => ({
+                                    ...prev,
+                                    importance: e.target.value as TaskImportance,
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                              >
+                                {TASK_IMPORTANCE_VALUES.map((importance) => (
+                                  <option key={importance} value={importance}>
+                                    重要度: {IMPORTANCE_LABELS[importance]}
+                                  </option>
+                                ))}
+                              </select>
+
+                              <select
+                                value={newTask.urgency}
+                                onChange={(e) =>
+                                  setNewTask((prev) => ({
+                                    ...prev,
+                                    urgency: e.target.value as TaskUrgency,
+                                  }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                              >
+                                {TASK_URGENCY_VALUES.map((urgency) => (
+                                  <option key={urgency} value={urgency}>
+                                    緊急度: {URGENCY_LABELS[urgency]}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <input
+                              type="date"
+                              value={newTask.dueDate}
+                              onChange={(e) => setNewTask((prev) => ({ ...prev, dueDate: e.target.value }))}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+
+                            <select
+                              value={newTask.gtdCategory}
+                              onChange={(e) =>
+                                setNewTask((prev) => {
+                                  const gtdCategory = e.target.value as TaskGtdCategory;
+                                  return {
+                                    ...prev,
+                                    gtdCategory,
+                                    projectTaskId: gtdCategory === 'next_action' ? prev.projectTaskId : '',
+                                  };
+                                })
+                              }
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            >
+                              {TASK_GTD_VALUES.map((category) => (
+                                <option key={category} value={category}>
+                                  GTD: {TASK_GTD_LABELS[category]}
+                                </option>
+                              ))}
+                            </select>
+
+                            {newTask.gtdCategory === 'next_action' ? (
+                              <select
+                                value={newTask.projectTaskId}
+                                onChange={(e) =>
+                                  setNewTask((prev) => ({ ...prev, projectTaskId: e.target.value }))
+                                }
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                              >
+                                <option value="">関連プロジェクト: 未設定</option>
+                                {projectTasks.map((projectTask) => (
+                                  <option key={projectTask.id} value={projectTask.id}>
+                                    関連プロジェクト: {projectTask.title}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : null}
+
+                            <button
+                              type="submit"
+                              disabled={saving}
+                              className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                              {saving ? '保存中...' : 'タスクを追加'}
+                            </button>
+                          </div>
+                        </form>
+                      </section>
+                    ) : null}
+
+                    {activeUtilityPanel === 'template' ? (
+                      <section className="max-h-[75vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+                        <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                            <div className="flex flex-wrap items-start justify-between gap-3">
+                              <div>
+                                <h2 className="text-base font-semibold text-slate-900">定型業務</h2>
+                                <p className="mt-1 text-xs text-slate-500">会議や週報など、必要な時だけ開いて管理します。</p>
+                              </div>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => void syncTemplateTasks('manual')}
+                                  disabled={syncingTemplates || activeTemplates.length === 0}
+                                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                >
+                                  {syncingTemplates ? '生成中...' : '今日分を生成'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setActiveUtilityPanel(null)}
+                                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+                                >
+                                  閉じる
+                                </button>
+                              </div>
+                            </div>
+
+                            <form onSubmit={(e) => void createTemplate(e)} className="mt-4 space-y-3">
+                              <input
+                                value={templateForm.title}
+                                onChange={(e) => setTemplateForm((prev) => ({ ...prev, title: e.target.value }))}
+                                placeholder="例: 週次レポート作成"
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                              />
+                              <textarea
+                                value={templateForm.description}
+                                onChange={(e) => setTemplateForm((prev) => ({ ...prev, description: e.target.value }))}
+                                placeholder="説明（任意）"
+                                rows={3}
+                                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                              />
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <select
+                                  value={templateForm.recurrenceType}
+                                  onChange={(e) =>
+                                    setTemplateForm((prev) => ({
+                                      ...prev,
+                                      recurrenceType: e.target.value as TaskTemplateRecurrence,
+                                    }))
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                >
+                                  {TASK_TEMPLATE_RECURRENCE_VALUES.map((recurrenceType) => (
+                                    <option key={recurrenceType} value={recurrenceType}>
+                                      頻度: {TASK_TEMPLATE_RECURRENCE_LABELS[recurrenceType]}
+                                    </option>
+                                  ))}
+                                </select>
+                                <select
+                                  value={templateForm.defaultGtdCategory}
+                                  onChange={(e) =>
+                                    setTemplateForm((prev) => ({
+                                      ...prev,
+                                      defaultGtdCategory: e.target.value as Exclude<TaskGtdCategory, 'project'>,
+                                    }))
+                                  }
+                                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                                >
+                                  {(['next_action', 'delegated', 'someday'] as Array<Exclude<TaskGtdCategory, 'project'>>).map((category) => (
+                                    <option key={category} value={category}>
+                                      既定GTD: {TASK_GTD_LABELS[category]}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                              <button
+                                type="submit"
+                                disabled={savingTemplate}
+                                className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+                              >
+                                {savingTemplate ? '保存中...' : 'テンプレートを追加'}
+                              </button>
+                            </form>
+                          </div>
+
+                          <div className="rounded-xl border border-slate-200 bg-white p-4">
+                            <div className="flex flex-wrap items-center justify-between gap-3">
+                              <div>
+                                <h3 className="text-base font-semibold text-slate-900">登録済みテンプレート</h3>
+                                <p className="mt-1 text-xs text-slate-500">有効 {activeTemplates.length}件 / 全 {templates.length}件</p>
+                              </div>
+                              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">
+                                必要な時だけ開く
+                              </span>
+                            </div>
+
+                            {templates.length === 0 ? (
+                              <p className="mt-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-4 text-sm text-slate-500">
+                                まだテンプレートはありません。会議や週報など、毎回作る仕事を登録できます。
+                              </p>
+                            ) : (
+                              <div className="mt-3 max-h-60 space-y-2 overflow-y-auto pr-1">
+                                {templates.map((template) => (
+                                  <div key={template.id} className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                      <div className="min-w-0">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <p className="truncate text-sm font-semibold text-slate-900">{template.title}</p>
+                                          <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${template.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-200 text-slate-600'}`}>
+                                            {template.is_active ? '有効' : '停止中'}
+                                          </span>
+                                        </div>
+                                        <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-slate-500">
+                                          <span>{TASK_TEMPLATE_RECURRENCE_LABELS[template.recurrence_type]}</span>
+                                          <span>GTD: {TASK_GTD_LABELS[template.default_gtd_category]}</span>
+                                          <span>開始: {formatDate(template.start_date)}</span>
+                                        </div>
+                                        {template.description ? (
+                                          <p className="mt-2 text-xs text-slate-600">{template.description}</p>
+                                        ) : null}
+                                      </div>
+                                      <button
+                                        type="button"
+                                        onClick={() => void toggleTemplateActive(template)}
+                                        disabled={syncingTemplates}
+                                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                                      >
+                                        {template.is_active ? '停止' : '有効化'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </section>
+                    ) : null}
+                  </div>
+                </>
+              ) : null}
+            </div>
+
             <section className="rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-sm backdrop-blur">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
@@ -2438,7 +2950,9 @@ export function KanbanBoard({
               </div>
 
               <div className="mt-1.5 space-y-1.5">
-                <AlertStrip items={boardAlertItems} compact defaultCollapsed />
+                {boardAlertItems.length > 0 ? (
+                  <AlertStrip items={boardAlertItems} compact defaultCollapsed />
+                ) : null}
                 <div className="flex flex-wrap items-center gap-2">
                   {activeFilterChips.map((chip) => (
                     <FilterChip key={chip} label={chip} />
@@ -2541,40 +3055,7 @@ export function KanbanBoard({
                     </div>
                   </section>
                 </div>
-              ) : (
-                <div className="mt-1.5 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="text-xs font-medium text-slate-600">止まり案件（危険順）</span>
-                    {stalledTaskQuickSelections.map((preset) => (
-                      <QuickSelectButton
-                        key={preset.key}
-                        label={preset.label}
-                        count={preset.taskIds.length}
-                        disabled={preset.taskIds.length === 0}
-                        onClick={() => applySelectionPreset(preset.taskIds)}
-                      />
-                    ))}
-                    <span className="text-[11px] text-slate-500">待ちに送る時は回答予定日を自動提案</span>
-                  </div>
-                  {stalledTasks.length > 0 ? (
-                    <div className="mt-2 grid gap-2 lg:grid-cols-2">
-                      {stalledTasks.slice(0, 2).map((item) => (
-                        <StalledTaskRow
-                          key={item.task.id}
-                          title={item.task.title}
-                          reason={item.reason}
-                          detail={item.detail}
-                          tone={item.tone}
-                          projectTitle={item.task.project_task_id ? projectTaskMap[item.task.project_task_id]?.title ?? null : null}
-                          onOpen={() => setEditingTask(item.task)}
-                          onDone={() => void updateStatus(item.task, 'done')}
-                          onWaiting={() => void applySuggestedWaiting(item.task)}
-                        />
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-              )}
+              ) : null}
 
               {viewMode === 'today' ? (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
@@ -2596,7 +3077,6 @@ export function KanbanBoard({
                   todayKey={todayKey}
                   activeSessionTask={activeSessionTask}
                   activeSessionElapsedLabel={activeSessionElapsedLabel}
-                  visibleTimeSummary={visibleTimeSummary}
                   dailyReviewSummary={dailyReviewSummary}
                   dailyReviewNote={dailyReviewNote}
                   weeklyReviewSummary={weeklyReviewSummary}
@@ -2972,6 +3452,15 @@ export function KanbanBoard({
               ))}
             </section>
           )}
+
+          <HistoryPanel
+            entries={boardHistoryEntries}
+            onClear={clearHistoryEntries}
+            onExportCsv={handleExportHistoryCsv}
+            onExportJson={handleExportHistoryJson}
+            title="履歴"
+            emptyLabel="まだ履歴はありません。タスク追加や一括操作を行うとここに残ります。"
+          />
         </section>
       </div>
 
@@ -3484,6 +3973,77 @@ function StalledTaskRow({
   );
 }
 
+function CompactFocusTaskRow({
+  label,
+  task,
+  reason,
+  detail,
+  tone,
+  projectTitle,
+  onOpen,
+  onDone,
+  onWaiting,
+  onStartSession,
+  onStopSession,
+  activeSessionTaskId,
+  timeDisplayNow,
+  disabled = false,
+}: {
+  label: string;
+  task: Task;
+  reason: string;
+  detail: string;
+  tone: 'danger' | 'warning' | 'info';
+  projectTitle?: string | null;
+  onOpen: () => void;
+  onDone: () => void;
+  onWaiting: () => void;
+  onStartSession: () => void;
+  onStopSession: () => void;
+  activeSessionTaskId: string | null;
+  timeDisplayNow: number;
+  disabled?: boolean;
+}) {
+  const toneClassName =
+    tone === 'danger'
+      ? 'border-rose-200 bg-rose-50 text-rose-700'
+      : tone === 'warning'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-blue-200 bg-blue-50 text-blue-700';
+
+  const sessionElapsedLabel = task.session_started_at
+    ? formatMinutesTotal(diffMinutes(task.session_started_at, new Date(timeDisplayNow).toISOString()))
+    : null;
+  const anotherTaskRunning = Boolean(activeSessionTaskId && activeSessionTaskId !== task.id);
+
+  return (
+    <article className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700">{label}</span>
+            <span className={`inline-flex rounded-full border px-2 py-1 text-[11px] font-semibold ${toneClassName}`}>{reason}</span>
+            {projectTitle ? <span className="rounded-full border border-slate-200 bg-slate-50 px-2 py-1 text-[11px] font-medium text-slate-600">Project: {projectTitle}</span> : null}
+            {task.session_started_at ? <span className="rounded-full bg-blue-50 px-2 py-1 text-[11px] font-medium text-blue-700">計測中 {sessionElapsedLabel}</span> : null}
+          </div>
+          <p className="mt-2 truncate text-sm font-semibold text-slate-900">{task.title}</p>
+          <p className="mt-1 text-xs text-slate-600">{detail}</p>
+        </div>
+        <div className="flex flex-wrap gap-2" data-no-card-click="true">
+          {task.session_started_at ? (
+            <button type="button" onClick={onStopSession} disabled={disabled} className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">作業終了</button>
+          ) : (
+            <button type="button" onClick={onStartSession} disabled={disabled || anotherTaskRunning} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 transition hover:bg-blue-100 disabled:cursor-not-allowed disabled:opacity-50">{anotherTaskRunning ? '別タスク計測中' : '作業開始'}</button>
+          )}
+          <button type="button" onClick={onWaiting} className="rounded-lg border border-blue-200 bg-blue-50 px-2.5 py-1.5 text-[11px] font-medium text-blue-700 transition hover:bg-blue-100">待ち＋日付</button>
+          <button type="button" onClick={onDone} className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-[11px] font-medium text-white transition hover:bg-slate-800">完了</button>
+          <button type="button" onClick={onOpen} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">開く</button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function FocusTaskCard({
   task,
   title,
@@ -3594,7 +4154,6 @@ function TodayTimeWorkspacePanel({
   todayKey,
   activeSessionTask,
   activeSessionElapsedLabel,
-  visibleTimeSummary,
   dailyReviewSummary,
   dailyReviewNote,
   weeklyReviewSummary,
@@ -3614,11 +4173,6 @@ function TodayTimeWorkspacePanel({
   todayKey: string;
   activeSessionTask: Task | null;
   activeSessionElapsedLabel: string | null;
-  visibleTimeSummary: {
-    trackedMinutes: number;
-    adjustmentMinutes: number;
-    totalMinutes: number;
-  };
   dailyReviewSummary: DailyReviewSummary;
   dailyReviewNote: string;
   weeklyReviewSummary: WeeklyReviewSummary;
@@ -3639,28 +4193,23 @@ function TodayTimeWorkspacePanel({
 
   return (
     <div className="mt-2 space-y-3">
-      <div className="grid gap-3 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)]">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h3 className="text-base font-semibold text-slate-900">今日の工数</h3>
-              <p className="mt-1 text-sm text-slate-500">開始 / 終了ボタンと補正、AI向けエクスポート</p>
+              <h3 className="text-base font-semibold text-slate-900">日次レビュー</h3>
+              <p className="mt-1 text-sm text-slate-500">{todayKey} の振り返り</p>
             </div>
-            {activeSessionTask ? (
-              <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
-                稼働中
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700">
+                記録 {dailyReviewSummary.taskSummaries.length}件
               </span>
-            ) : null}
-          </div>
-
-          <div className="mt-4 grid gap-2 md:grid-cols-3">
-            <CompactContextStat label="表示中累積" value={formatMinutesTotal(visibleTimeSummary.totalMinutes)} />
-            <CompactContextStat label="自動計測" value={formatMinutesTotal(visibleTimeSummary.trackedMinutes)} />
-            <CompactContextStat
-              label="手動補正"
-              value={formatMinutesTotal(visibleTimeSummary.adjustmentMinutes)}
-              danger={visibleTimeSummary.adjustmentMinutes < 0}
-            />
+              {activeSessionTask ? (
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">
+                  稼働中
+                </span>
+              ) : null}
+            </div>
           </div>
 
           {activeSessionTask ? (
@@ -3691,42 +4240,9 @@ function TodayTimeWorkspacePanel({
                 </div>
               </div>
             </div>
-          ) : (
-            <p className="mt-4 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-              稼働中のタスクはありません。今日画面のカードにある「作業開始」から計測できます。
-            </p>
-          )}
+          ) : null}
 
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
-            <button
-              type="button"
-              onClick={onExportTimeCsv}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              工数CSV
-            </button>
-            <button
-              type="button"
-              onClick={onExportTimeJson}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              工数JSON
-            </button>
-          </div>
-        </section>
-
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h3 className="text-base font-semibold text-slate-900">日次レビュー</h3>
-              <p className="mt-1 text-sm text-slate-500">{todayKey} の振り返り</p>
-            </div>
-            <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-700">
-              {dailyReviewSummary.taskSummaries.length}件
-            </span>
-          </div>
-
-          <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4 2xl:grid-cols-2">
+          <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
             <CompactContextStat label="今日の合計" value={formatMinutesTotal(dailyReviewSummary.totalMinutes)} />
             <CompactContextStat label="完了" value={`${dailyReviewSummary.completedCount}件`} />
             <CompactContextStat label="作業セッション" value={`${dailyReviewSummary.sessionCount}回`} />
@@ -3737,28 +4253,72 @@ function TodayTimeWorkspacePanel({
             />
           </div>
 
-          <div className="mt-4 space-y-2">
-            {dailyReviewSummary.taskSummaries.slice(0, 5).map((item) => (
-              <button
-                key={item.taskId}
-                type="button"
-                onClick={() => onOpenTask(item.taskId)}
-                className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-left transition hover:bg-slate-100"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-slate-900">{item.title}</span>
-                  <span className="block text-xs text-slate-500">
-                    {item.projectTitle ? `Project: ${item.projectTitle}` : '単独タスク'}
+          <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h4 className="text-sm font-semibold text-slate-900">今日の記録</h4>
+                <p className="mt-1 text-xs text-slate-500">時間を使ったタスクを上から確認</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+                <button
+                  type="button"
+                  onClick={onExportTimeCsv}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                >
+                  工数CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={onExportTimeJson}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                >
+                  工数JSON
+                </button>
+                <button
+                  type="button"
+                  onClick={onExportDailyCsv}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                >
+                  日次CSV
+                </button>
+                <button
+                  type="button"
+                  onClick={onExportDailyJson}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                >
+                  日次JSON
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3 space-y-2">
+              {dailyReviewSummary.taskSummaries.slice(0, 5).map((item, index) => (
+                <button
+                  key={item.taskId}
+                  type="button"
+                  onClick={() => onOpenTask(item.taskId)}
+                  className="flex w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left transition hover:bg-slate-100"
+                >
+                  <span className="min-w-0">
+                    <span className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-700">
+                        #{index + 1}
+                      </span>
+                      <span className="block truncate text-sm font-medium text-slate-900">{item.title}</span>
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500">
+                      {item.projectTitle ? `Project: ${item.projectTitle}` : '単独タスク'}
+                    </span>
                   </span>
-                </span>
-                <span className="text-xs font-semibold text-slate-700">{formatMinutesTotal(item.totalMinutes)}</span>
-              </button>
-            ))}
-            {dailyReviewSummary.taskSummaries.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-                今日の記録はまだありません。
-              </p>
-            ) : null}
+                  <span className="shrink-0 text-xs font-semibold text-slate-700">{formatMinutesTotal(item.totalMinutes)}</span>
+                </button>
+              ))}
+              {dailyReviewSummary.taskSummaries.length === 0 ? (
+                <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-4 text-sm text-slate-500">
+                  今日の記録はまだありません。
+                </p>
+              ) : null}
+            </div>
           </div>
 
           <label className="mt-4 block text-sm font-medium text-slate-700">終業メモ</label>
@@ -3769,111 +4329,96 @@ function TodayTimeWorkspacePanel({
             rows={4}
             className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
           />
+        </section>
 
-          <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
-            <button
-              type="button"
-              onClick={onExportDailyCsv}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              日次CSV
-            </button>
-            <button
-              type="button"
-              onClick={onExportDailyJson}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-            >
-              日次JSON
-            </button>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">週次レビュー</h3>
+              <p className="mt-1 text-sm text-slate-500">{weeklyReviewSummary.weekLabel} の振り返り</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
+                週の流れを見る
+              </span>
+              <button
+                type="button"
+                onClick={onExportWeeklyCsv}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                週次CSV
+              </button>
+              <button
+                type="button"
+                onClick={onExportWeeklyJson}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                週次JSON
+              </button>
+            </div>
           </div>
+
+          <div className="mt-4 grid gap-2 md:grid-cols-2">
+            <CompactContextStat label="週の合計" value={formatWeeklyReviewMinutes(weeklyReviewSummary.totalMinutes)} />
+            <CompactContextStat label="完了" value={`${weeklyReviewSummary.completedCount}件`} />
+            <CompactContextStat label="作業セッション" value={`${weeklyReviewSummary.sessionCount}件`} />
+            <CompactContextStat
+              label="補正入力"
+              value={`${weeklyReviewSummary.adjustmentCount}件`}
+              danger={weeklyReviewSummary.adjustmentCount > 0}
+            />
+          </div>
+
+          <div className="mt-4 grid gap-3">
+            <ReviewTopListCard
+              title="タスク別の工数上位"
+              items={weeklyReviewSummary.taskSummaries}
+              emptyLabel="今週はタスク別の工数記録がありません。"
+            />
+            <ReviewTopListCard
+              title="project別の工数上位"
+              items={weeklyReviewSummary.projectSummaries}
+              emptyLabel="今週はproject別の工数記録がありません。"
+            />
+            <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+              <div className="flex items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold text-slate-900">止まり案件の発生傾向</h4>
+                <span className="text-[11px] text-slate-500">今週の詰まり方</span>
+              </div>
+              {visibleWeeklyTrends.length === 0 ? (
+                <p className="mt-3 text-sm text-slate-500">今週は目立つ停滞傾向はありません。</p>
+              ) : (
+                <div className="mt-3 space-y-2">
+                  {visibleWeeklyTrends.map((item) => (
+                    <div
+                      key={item.key}
+                      className="rounded-lg border border-slate-200 bg-white px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-slate-900">{item.label}</p>
+                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
+                          {item.count}件
+                        </span>
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-500">{item.detail}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+          </div>
+
+          <label className="mt-4 block text-sm font-medium text-slate-700">来週に向けた振り返りメモ</label>
+          <textarea
+            value={weeklyReviewNote}
+            onChange={(event) => onWeeklyReviewNoteChange(event.target.value)}
+            placeholder="例: waiting の催促を前倒しする / 高工数タスクを分割する / project の次アクションを明確にする"
+            rows={4}
+            className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+          />
+          <p className="mt-1 text-xs text-slate-500">このメモは週次CSV / JSON にも含まれます。</p>
         </section>
       </div>
-
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">週次レビュー</h3>
-            <p className="mt-1 text-sm text-slate-500">{weeklyReviewSummary.weekLabel} の振り返り</p>
-          </div>
-          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700">
-            日次と同じ見方で週を確認
-          </span>
-        </div>
-
-        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          <CompactContextStat label="週の合計" value={formatWeeklyReviewMinutes(weeklyReviewSummary.totalMinutes)} />
-          <CompactContextStat label="完了" value={`${weeklyReviewSummary.completedCount}件`} />
-          <CompactContextStat label="作業セッション" value={`${weeklyReviewSummary.sessionCount}件`} />
-          <CompactContextStat
-            label="補正入力"
-            value={`${weeklyReviewSummary.adjustmentCount}件`}
-            danger={weeklyReviewSummary.adjustmentCount > 0}
-          />
-        </div>
-
-        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
-          <ReviewTopListCard
-            title="タスク別の工数上位"
-            items={weeklyReviewSummary.taskSummaries}
-            emptyLabel="今週はタスク別の工数記録がありません。"
-          />
-          <ReviewTopListCard
-            title="project別の工数上位"
-            items={weeklyReviewSummary.projectSummaries}
-            emptyLabel="今週はproject別の工数記録がありません。"
-          />
-          <section className="rounded-xl border border-slate-200 bg-slate-50 p-4">
-            <h4 className="text-sm font-semibold text-slate-900">止まり案件の発生傾向</h4>
-            {visibleWeeklyTrends.length === 0 ? (
-              <p className="mt-3 text-sm text-slate-500">今週は目立つ停滞傾向はありません。</p>
-            ) : (
-              <div className="mt-3 space-y-2">
-                {visibleWeeklyTrends.map((item) => (
-                  <div
-                    key={item.key}
-                    className="rounded-lg border border-slate-200 bg-white px-3 py-2"
-                  >
-                    <div className="flex items-center justify-between gap-3">
-                      <p className="text-sm font-medium text-slate-900">{item.label}</p>
-                      <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-800">
-                        {item.count}件
-                      </span>
-                    </div>
-                    <p className="mt-1 text-[11px] text-slate-500">{item.detail}</p>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
-
-        <label className="mt-4 block text-sm font-medium text-slate-700">来週に向けた振り返りメモ</label>
-        <textarea
-          value={weeklyReviewNote}
-          onChange={(event) => onWeeklyReviewNoteChange(event.target.value)}
-          placeholder="例: waiting の催促を前倒しする / 高工数タスクを分割する / project の次アクションを明確にする"
-          rows={4}
-          className="mt-2 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-        />
-        <p className="mt-1 text-xs text-slate-500">このメモは週次CSV / JSON にも含まれます。</p>
-
-        <div className="mt-4 grid grid-cols-2 gap-2 sm:max-w-md">
-          <button
-            type="button"
-            onClick={onExportWeeklyCsv}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            週次CSV
-          </button>
-          <button
-            type="button"
-            onClick={onExportWeeklyJson}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
-          >
-            週次JSON
-          </button>
-        </div>
-      </section>
     </div>
   );
 }
