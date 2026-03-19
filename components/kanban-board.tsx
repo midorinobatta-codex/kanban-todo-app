@@ -686,6 +686,7 @@ export function KanbanBoard({
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [bulkWaitingResponseDate, setBulkWaitingResponseDate] = useState('');
   const [expandedSectionKeys, setExpandedSectionKeys] = useState<Record<string, boolean>>({});
+  const [reviewTargetOnly, setReviewTargetOnly] = useState(true);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
   const { projects } = useProjects();
@@ -1423,6 +1424,21 @@ export function KanbanBoard({
   const reviewTaskProjectCount = useMemo(
     () => reviewTaskQueue.filter((item) => Boolean(item.task.project_task_id)).length,
     [reviewTaskQueue],
+  );
+
+  const reviewTargetTaskIds = useMemo(
+    () => Array.from(new Set(reviewTaskQueue.map((item) => item.task.id))),
+    [reviewTaskQueue],
+  );
+
+  const reviewFilterQuickActions = useMemo(
+    () => [
+      { key: 'reviewAll', label: '対象すべて', count: reviewTargetTaskIds.length, taskIds: reviewTargetTaskIds },
+      { key: 'reviewWaiting', label: '回答超過', count: stalledTaskBuckets.waitingOverdue.length, taskIds: stalledTaskBuckets.waitingOverdue.map((task) => task.id) },
+      { key: 'reviewNoDate', label: '待ち日付未設定', count: stalledTaskBuckets.waitingNoDate.length, taskIds: stalledTaskBuckets.waitingNoDate.map((task) => task.id) },
+      { key: 'reviewDoing', label: '進行停滞', count: stalledTaskBuckets.doingStale.length, taskIds: stalledTaskBuckets.doingStale.map((task) => task.id) },
+    ],
+    [reviewTargetTaskIds, stalledTaskBuckets.doingStale, stalledTaskBuckets.waitingNoDate, stalledTaskBuckets.waitingOverdue],
   );
 
   const toggleSectionExpanded = useCallback((key: string) => {
@@ -2639,6 +2655,22 @@ export function KanbanBoard({
               ) : null}
             </div>
           </section>
+
+          {viewMode === 'today' ? (
+            <TodayReviewSupportPanel
+              mode={todayScreenMode}
+              todaySummary={todaySummary}
+              reviewSummary={reviewSummary}
+              reviewTaskCount={reviewTaskQueue.length}
+              reviewProjectCount={reviewProjects.length}
+              reviewTaskProjectCount={reviewTaskProjectCount}
+              reviewTargetOnly={reviewTargetOnly}
+              onReviewTargetOnlyChange={setReviewTargetOnly}
+              todayQuickSelections={todayQuickSelections}
+              reviewQuickSelections={reviewFilterQuickActions}
+              onApplySelectionPreset={applySelectionPreset}
+            />
+          ) : null}
         </aside>
 
         <section className="order-1 space-y-6 xl:order-2">
@@ -2991,14 +3023,17 @@ export function KanbanBoard({
               ) : null}
             </div>
 
-            <section className="rounded-2xl border border-slate-200 bg-white/95 p-1.5 shadow-sm backdrop-blur sm:p-2">
-              <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
-                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+            <section className="rounded-2xl border border-slate-200 bg-white/95 px-2.5 py-2 shadow-sm backdrop-blur sm:px-3 sm:py-2.5">
+              <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5 sm:gap-2">
                   <h2 className="text-sm font-semibold text-slate-900 sm:text-base">
                     {VIEW_MODE_LABELS[viewMode]} の現在地
                   </h2>
+                  {viewMode === 'today' ? (
+                    <TodayReviewModeToggle mode={todayScreenMode} onChange={setTodayScreenMode} compact />
+                  ) : null}
                   <div className="inline-flex items-center rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700 sm:px-2.5 sm:text-[11px]">
-                    表示モード: {VIEW_MODE_LABELS[viewMode]}
+                    表示 {visibleTaskCount}件
                   </div>
                   <div className="inline-flex items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-700 sm:px-2.5 sm:text-[11px]">
                     並び順: {TASK_SORT_LABELS[sortKey]}
@@ -3011,7 +3046,43 @@ export function KanbanBoard({
                   </Link>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+                  <div className="grid min-w-0 grid-cols-2 gap-1 sm:flex sm:flex-wrap">
+                    {viewMode === 'today' ? (
+                      <>
+                        <CompactContextStat
+                          label={todayScreenMode === 'review' ? '停滞件数' : '今すぐ対応'}
+                          value={`${todayScreenMode === 'review' ? reviewSummary.stalledCount : todaySummary.urgentActionCount}件`}
+                          danger={todayScreenMode === 'review' ? reviewSummary.stalledCount > 0 : todaySummary.urgentActionCount > 0}
+                          compact
+                        />
+                        <CompactContextStat
+                          label="回答予定日超過"
+                          value={`${todayScreenMode === 'review' ? reviewSummary.waitingOverdueCount : todaySummary.waitingOverdueCount}件`}
+                          danger={todayScreenMode === 'review' ? reviewSummary.waitingOverdueCount > 0 : todaySummary.waitingOverdueCount > 0}
+                          compact
+                        />
+                        <CompactContextStat
+                          label={todayScreenMode === 'review' ? '次アクション未設定PJ' : '待ち日付未設定'}
+                          value={`${todayScreenMode === 'review' ? reviewSummary.projectNoActionCount : todaySummary.waitingNoDateCount}件`}
+                          danger={todayScreenMode === 'review' ? reviewSummary.projectNoActionCount > 0 : todaySummary.waitingNoDateCount > 0}
+                          compact
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <CompactContextStat label="未完了" value={`${incompleteTaskCount}件`} compact />
+                        <CompactContextStat label="進行中" value={`${groupedTasks.doing.length}件`} compact />
+                        <CompactContextStat
+                          label="待ち"
+                          value={`${groupedTasks.waiting.length}件`}
+                          danger={groupedTasks.waiting.length > 0}
+                          compact
+                        />
+                      </>
+                    )}
+                  </div>
+
                   <button
                     type="button"
                     onClick={() => {
@@ -3042,136 +3113,51 @@ export function KanbanBoard({
                 </div>
               </div>
 
-              <div className="mt-1 grid gap-1.5 md:grid-cols-2 xl:grid-cols-4">
-                <CompactContextStat label="表示中タスク" value={`${visibleTaskCount}件`} />
-                {viewMode === 'today' ? (
-                  <>
-                    <CompactContextStat
-                      label={todayScreenMode === 'review' ? '停滞件数' : '今すぐ対応'}
-                      value={`${todayScreenMode === 'review' ? reviewSummary.stalledCount : todaySummary.urgentActionCount}件`}
-                      danger={todayScreenMode === 'review' ? reviewSummary.stalledCount > 0 : todaySummary.urgentActionCount > 0}
-                    />
-                    <CompactContextStat
-                      label="回答予定日超過"
-                      value={`${todayScreenMode === 'review' ? reviewSummary.waitingOverdueCount : todaySummary.waitingOverdueCount}件`}
-                      danger={todayScreenMode === 'review' ? reviewSummary.waitingOverdueCount > 0 : todaySummary.waitingOverdueCount > 0}
-                    />
-                    <CompactContextStat
-                      label={todayScreenMode === 'review' ? '次アクション未設定PJ' : '待ち日付未設定'}
-                      value={`${todayScreenMode === 'review' ? reviewSummary.projectNoActionCount : todaySummary.waitingNoDateCount}件`}
-                      danger={todayScreenMode === 'review' ? reviewSummary.projectNoActionCount > 0 : todaySummary.waitingNoDateCount > 0}
-                    />
-                  </>
-                ) : (
-                  <>
-                    <CompactContextStat label="未完了" value={`${incompleteTaskCount}件`} />
-                    <CompactContextStat label="進行中" value={`${groupedTasks.doing.length}件`} />
-                    <CompactContextStat
-                      label="待ち"
-                      value={`${groupedTasks.waiting.length}件`}
-                      danger={groupedTasks.waiting.length > 0}
-                    />
-                  </>
-                )}
-              </div>
-
-              <div className="mt-1 space-y-1">
-                {boardAlertItems.length > 0 ? (
-                  <AlertStrip items={boardAlertItems} compact defaultCollapsed />
-                ) : null}
-                <div className="flex flex-wrap items-center gap-2">
+              {(boardAlertItems.length > 0 || activeFilterChips.length > 0 || selectionMode) ? (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {boardAlertItems.length > 0 ? <AlertStrip items={boardAlertItems} compact defaultCollapsed /> : null}
                   {activeFilterChips.map((chip) => (
                     <FilterChip key={chip} label={chip} />
                   ))}
                   {selectionMode ? <FilterChip label={`選択中 ${selectedTaskIds.length}件`} subtle /> : null}
                 </div>
-              </div>
+              ) : null}
 
               {viewMode === 'today' ? (
-                <div className="mt-1.5 space-y-1.5">
-                  <TodayReviewModeToggle mode={todayScreenMode} onChange={setTodayScreenMode} />
-
+                <div className="mt-2">
                   {todayScreenMode === 'today' ? (
-                    <>
-                      <div className="grid gap-1.5 xl:grid-cols-[minmax(0,1.75fr)_minmax(18rem,0.95fr)]">
-                        <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
-                          <div className="flex items-center justify-between gap-1.5">
-                            <h3 className="text-sm font-semibold text-slate-900">今やる1件 と 次にやる2件</h3>
-                            <span className="text-[11px] text-slate-500">主役を最優先で表示</span>
-                          </div>
-                          {todayFocusTasks.length === 0 ? (
-                            <p className="mt-2 text-xs text-slate-500">条件内に優先候補はありません。</p>
-                          ) : (
-                            <div className="mt-1.5 grid gap-1.5 xl:grid-cols-[minmax(0,1.45fr)_minmax(17rem,0.95fr)]">
-                              <FeaturedFocusTaskCard
-                                task={todayFocusTasks[0].task}
-                                title={todayFocusTasks[0].task.title}
-                                reason={todayFocusTasks[0].reason}
-                                detail={todayFocusTasks[0].detail}
-                                tone={todayFocusTasks[0].tone}
-                                projectTitle={todayFocusTasks[0].task.project_task_id ? projectTaskMap[todayFocusTasks[0].task.project_task_id]?.title ?? null : null}
-                                onOpen={() => setEditingTask(todayFocusTasks[0].task)}
-                                onDone={() => void updateStatus(todayFocusTasks[0].task, 'done')}
-                                onWaiting={() => void applySuggestedWaiting(todayFocusTasks[0].task)}
-                                onStartSession={() => void startTaskSession(todayFocusTasks[0].task)}
-                                onStopSession={() => void stopTaskSession(todayFocusTasks[0].task)}
-                                onOpenAdjustment={() => setAdjustingTask(todayFocusTasks[0].task)}
-                                activeSessionTaskId={activeSessionTask?.id ?? null}
-                                timeDisplayNow={clockNow}
-                                disabled={updatingTaskId === todayFocusTasks[0].task.id}
-                              />
-                              <div className="grid gap-1.5">
-                                {todayFocusTasks.slice(1).map((item) => (
-                                  <FocusTaskCard
-                                    key={item.task.id}
-                                    task={item.task}
-                                    title={item.task.title}
-                                    reason={item.reason}
-                                    detail={item.detail}
-                                    tone={item.tone}
-                                    projectTitle={item.task.project_task_id ? projectTaskMap[item.task.project_task_id]?.title ?? null : null}
-                                    onOpen={() => setEditingTask(item.task)}
-                                    onDone={() => void updateStatus(item.task, 'done')}
-                                    onWaiting={() => void applySuggestedWaiting(item.task)}
-                                    onStartSession={() => void startTaskSession(item.task)}
-                                    onStopSession={() => void stopTaskSession(item.task)}
-                                    onOpenAdjustment={() => setAdjustingTask(item.task)}
-                                    activeSessionTaskId={activeSessionTask?.id ?? null}
-                                    timeDisplayNow={clockNow}
-                                    disabled={updatingTaskId === item.task.id}
-                                  />
-                                ))}
-                                {todayFocusTasks.length === 1 ? (
-                                  <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-xs text-slate-400">次点候補はありません。</div>
-                                ) : null}
-                              </div>
-                            </div>
-                          )}
-                        </section>
-
-                        <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <h3 className="text-sm font-semibold text-slate-900">止まり案件</h3>
-                            <span className="text-[11px] text-slate-500">危険順に自動整列</span>
-                          </div>
-                          <div className="mt-1.5 flex flex-wrap gap-1.5">
-                            {stalledTaskQuickSelections.map((preset) => (
-                              <QuickSelectButton
-                                key={preset.key}
-                                label={preset.label}
-                                count={preset.taskIds.length}
-                                disabled={preset.taskIds.length === 0}
-                                onClick={() => applySelectionPreset(preset.taskIds)}
-                              />
-                            ))}
-                          </div>
-                          <div className="mt-1.5 space-y-1.5">
-                            {stalledTasks.length === 0 ? (
-                              <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-5 text-xs text-slate-500">止まり案件はありません。</p>
-                            ) : (
-                              stalledTasks.map((item) => (
-                                <StalledTaskRow
+                    <div className="grid gap-1.5 xl:grid-cols-[minmax(0,1.75fr)_minmax(18rem,0.95fr)]">
+                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <h3 className="text-sm font-semibold text-slate-900">今やる1件 と 次にやる2件</h3>
+                          <span className="text-[11px] text-slate-500">主役を最優先で表示</span>
+                        </div>
+                        {todayFocusTasks.length === 0 ? (
+                          <p className="mt-2 text-xs text-slate-500">条件内に優先候補はありません。</p>
+                        ) : (
+                          <div className="mt-1.5 grid gap-1.5 xl:grid-cols-[minmax(0,1.45fr)_minmax(17rem,0.95fr)]">
+                            <FeaturedFocusTaskCard
+                              task={todayFocusTasks[0].task}
+                              title={todayFocusTasks[0].task.title}
+                              reason={todayFocusTasks[0].reason}
+                              detail={todayFocusTasks[0].detail}
+                              tone={todayFocusTasks[0].tone}
+                              projectTitle={todayFocusTasks[0].task.project_task_id ? projectTaskMap[todayFocusTasks[0].task.project_task_id]?.title ?? null : null}
+                              onOpen={() => setEditingTask(todayFocusTasks[0].task)}
+                              onDone={() => void updateStatus(todayFocusTasks[0].task, 'done')}
+                              onWaiting={() => void applySuggestedWaiting(todayFocusTasks[0].task)}
+                              onStartSession={() => void startTaskSession(todayFocusTasks[0].task)}
+                              onStopSession={() => void stopTaskSession(todayFocusTasks[0].task)}
+                              onOpenAdjustment={() => setAdjustingTask(todayFocusTasks[0].task)}
+                              activeSessionTaskId={activeSessionTask?.id ?? null}
+                              timeDisplayNow={clockNow}
+                              disabled={updatingTaskId === todayFocusTasks[0].task.id}
+                            />
+                            <div className="grid gap-1.5">
+                              {todayFocusTasks.slice(1).map((item) => (
+                                <FocusTaskCard
                                   key={item.task.id}
+                                  task={item.task}
                                   title={item.task.title}
                                   reason={item.reason}
                                   detail={item.detail}
@@ -3180,56 +3166,70 @@ export function KanbanBoard({
                                   onOpen={() => setEditingTask(item.task)}
                                   onDone={() => void updateStatus(item.task, 'done')}
                                   onWaiting={() => void applySuggestedWaiting(item.task)}
+                                  onStartSession={() => void startTaskSession(item.task)}
+                                  onStopSession={() => void stopTaskSession(item.task)}
+                                  onOpenAdjustment={() => setAdjustingTask(item.task)}
+                                  activeSessionTaskId={activeSessionTask?.id ?? null}
+                                  timeDisplayNow={clockNow}
+                                  disabled={updatingTaskId === item.task.id}
                                 />
-                              ))
-                            )}
-                          </div>
-                        </section>
-                      </div>
-
-                      <div className="mt-1 flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50 px-2.5 py-1.5 sm:gap-2 sm:px-3 sm:py-2">
-                        <span className="text-xs font-medium text-slate-600">クイック選択</span>
-                        {todayQuickSelections.map((preset) => (
-                          <QuickSelectButton
-                            key={preset.key}
-                            label={preset.label}
-                            count={preset.taskIds.length}
-                            disabled={preset.taskIds.length === 0}
-                            onClick={() => applySelectionPreset(preset.taskIds)}
-                          />
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <div className="grid gap-2 xl:grid-cols-[minmax(0,1.7fr)_minmax(18rem,1fr)]">
-                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3 xl:col-span-2">
-                        <div className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2">
-                          <div className="min-w-0">
-                            <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                              <h3 className="text-sm font-semibold text-slate-900">Reviewサマリーバー</h3>
-                              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 sm:px-2.5 sm:text-[11px]">処理対象 {reviewTaskQueue.length + reviewProjects.length}件</span>
+                              ))}
+                              {todayFocusTasks.length === 1 ? (
+                                <div className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-6 text-xs text-slate-400">次点候補はありません。</div>
+                              ) : null}
                             </div>
-                            <p className="mt-0.5 text-[11px] text-slate-500">止まり理由をまとめて確認し、そのまま処理に入れます。</p>
                           </div>
-                        </div>
-                        <div className="mt-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-5">
-                          <CompactContextStat label="停滞件数" value={`${reviewSummary.stalledCount}件`} danger={reviewSummary.stalledCount > 0} />
-                          <CompactContextStat label="Waiting期限超過" value={`${reviewSummary.waitingOverdueCount}件`} danger={reviewSummary.waitingOverdueCount > 0} />
-                          <CompactContextStat label="待ち日付未設定" value={`${reviewSummary.waitingNoDateCount}件`} danger={reviewSummary.waitingNoDateCount > 0} />
-                          <CompactContextStat label="次アクション未設定PJ" value={`${reviewSummary.projectNoActionCount}件`} danger={reviewSummary.projectNoActionCount > 0} />
-                          <CompactContextStat label="進行中(WIP)" value={`${reviewSummary.wipCount}件`} />
-                        </div>
-                        <div className="mt-2 grid gap-1.5 lg:grid-cols-3">
-                          <ReviewHintCard label="タスク" value={`${reviewTaskQueue.length}件`} detail={reviewTaskProjectCount > 0 ? `project連動 ${reviewTaskProjectCount}件` : '止まり理由を見て1件ずつ片付け'} tone="warning" />
-                          <ReviewHintCard label="プロジェクト" value={`${reviewProjects.length}件`} detail={reviewSummary.projectNoActionCount > 0 ? `次アクション未設定 ${reviewSummary.projectNoActionCount}件` : '未設定の next action はありません'} tone="info" />
-                          <ReviewHintCard label="推奨順" value="1→2→3" detail="回答超過 → 待ち日付未設定 → 次アクション未設定PJ" tone="danger" />
-                        </div>
+                        )}
                       </section>
 
                       <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-slate-900">止まり案件を順に処理</h3>
-                          <span className="text-[11px] text-slate-500">危険順に表示</span>
+                          <h3 className="text-sm font-semibold text-slate-900">止まり案件</h3>
+                          <span className="text-[11px] text-slate-500">危険順に自動整列</span>
+                        </div>
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {stalledTaskQuickSelections.map((preset) => (
+                            <QuickSelectButton
+                              key={preset.key}
+                              label={preset.label}
+                              count={preset.taskIds.length}
+                              disabled={preset.taskIds.length === 0}
+                              onClick={() => applySelectionPreset(preset.taskIds)}
+                            />
+                          ))}
+                        </div>
+                        <div className="mt-1.5 space-y-1.5">
+                          {stalledTasks.length === 0 ? (
+                            <p className="rounded-xl border border-dashed border-slate-300 bg-white px-4 py-5 text-xs text-slate-500">止まり案件はありません。</p>
+                          ) : (
+                            stalledTasks.map((item) => (
+                              <StalledTaskRow
+                                key={item.task.id}
+                                title={item.task.title}
+                                reason={item.reason}
+                                detail={item.detail}
+                                tone={item.tone}
+                                projectTitle={item.task.project_task_id ? projectTaskMap[item.task.project_task_id]?.title ?? null : null}
+                                onOpen={() => setEditingTask(item.task)}
+                                onDone={() => void updateStatus(item.task, 'done')}
+                                onWaiting={() => void applySuggestedWaiting(item.task)}
+                              />
+                            ))
+                          )}
+                        </div>
+                      </section>
+                    </div>
+                  ) : (
+                    <div className="grid gap-2 xl:grid-cols-[minmax(0,1.45fr)_minmax(0,1fr)]">
+                      <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-900">止まり案件を順に処理</h3>
+                            <p className="text-[11px] text-slate-500">危険順に並べた処理対象だけを薄く表示します。</p>
+                          </div>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 sm:px-2.5 sm:text-[11px]">
+                            タスク {reviewTaskQueue.length}件
+                          </span>
                         </div>
                         <div className="mt-2 space-y-1.5">
                           {reviewTaskQueue.length === 0 ? (
@@ -3259,8 +3259,13 @@ export function KanbanBoard({
 
                       <section className="rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3">
                         <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-sm font-semibold text-slate-900">次アクション未設定 / 要確認プロジェクト</h3>
-                          <span className="text-[11px] text-slate-500">project を止めないための導線</span>
+                          <div>
+                            <h3 className="text-sm font-semibold text-slate-900">次アクション未設定 / 要確認プロジェクト</h3>
+                            <p className="text-[11px] text-slate-500">project を止めないための確認先</p>
+                          </div>
+                          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 sm:px-2.5 sm:text-[11px]">
+                            project {reviewProjects.length}件
+                          </span>
                         </div>
                         <div className="mt-2 space-y-1.5">
                           {reviewProjects.length === 0 ? (
@@ -3290,7 +3295,6 @@ export function KanbanBoard({
                   )}
                 </div>
               ) : null}
-
               {viewMode === 'today' && todayScreenMode === 'today' ? (
                 <TodayTimeWorkspacePanel
                   todayKey={todayKey}
@@ -3814,12 +3818,14 @@ function QuickDatePresetButton({
 function TodayReviewModeToggle({
   mode,
   onChange,
+  compact = false,
 }: {
   mode: TodayScreenMode;
   onChange: (mode: TodayScreenMode) => void;
+  compact?: boolean;
 }) {
   return (
-    <div className="inline-flex items-center rounded-xl border border-slate-200 bg-slate-50 p-0.5 shadow-sm">
+    <div className={`inline-flex items-center rounded-xl border border-slate-200 bg-slate-50 shadow-sm ${compact ? 'p-0.5' : 'p-0.5'}`}>
       {([
         { key: 'today', label: 'Today', detail: '実行モード' },
         { key: 'review', label: 'Review', detail: '整理・解消モード' },
@@ -3830,16 +3836,111 @@ function TodayReviewModeToggle({
             key={item.key}
             type="button"
             onClick={() => onChange(item.key)}
-            className={`rounded-lg px-2.5 py-1.5 text-left transition sm:px-3 sm:py-2 ${
+            className={`rounded-lg text-left transition ${compact ? 'px-2 py-1' : 'px-2.5 py-1.5 sm:px-3 sm:py-2'} ${
               active ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200' : 'text-slate-500 hover:text-slate-700'
             }`}
           >
-            <div className="text-xs font-semibold sm:text-sm">{item.label}</div>
-            <div className="text-[10px] sm:text-[11px]">{item.detail}</div>
+            <div className={`font-semibold ${compact ? 'text-[11px] sm:text-xs' : 'text-xs sm:text-sm'}`}>{item.label}</div>
+            {!compact ? <div className="text-[10px] sm:text-[11px]">{item.detail}</div> : null}
           </button>
         );
       })}
     </div>
+  );
+}
+
+
+function TodayReviewSupportPanel({
+  mode,
+  todaySummary,
+  reviewSummary,
+  reviewTaskCount,
+  reviewProjectCount,
+  reviewTaskProjectCount,
+  reviewTargetOnly,
+  onReviewTargetOnlyChange,
+  todayQuickSelections,
+  reviewQuickSelections,
+  onApplySelectionPreset,
+}: {
+  mode: TodayScreenMode;
+  todaySummary: { urgentActionCount: number; doingCount: number; waitingOverdueCount: number; waitingNoDateCount: number; projectCount: number; totalCount: number };
+  reviewSummary: { stalledCount: number; waitingOverdueCount: number; waitingNoDateCount: number; projectNoActionCount: number; wipCount: number; overdueTaskCount: number };
+  reviewTaskCount: number;
+  reviewProjectCount: number;
+  reviewTaskProjectCount: number;
+  reviewTargetOnly: boolean;
+  onReviewTargetOnlyChange: (value: boolean) => void;
+  todayQuickSelections: Array<{ key: string; label: string; taskIds: string[] }>;
+  reviewQuickSelections: Array<{ key: string; label: string; count: number; taskIds: string[] }>;
+  onApplySelectionPreset: (taskIds: string[]) => void;
+}) {
+  const stats = mode === 'review'
+    ? [
+        { label: 'Review対象', value: `${reviewTaskCount + reviewProjectCount}件`, danger: reviewTaskCount + reviewProjectCount > 0 },
+        { label: '停滞件数', value: `${reviewSummary.stalledCount}件`, danger: reviewSummary.stalledCount > 0 },
+        { label: 'Waiting期限超過', value: `${reviewSummary.waitingOverdueCount}件`, danger: reviewSummary.waitingOverdueCount > 0 },
+        { label: '待ち日付未設定', value: `${reviewSummary.waitingNoDateCount}件`, danger: reviewSummary.waitingNoDateCount > 0 },
+        { label: '次アクション未設定PJ', value: `${reviewSummary.projectNoActionCount}件`, danger: reviewSummary.projectNoActionCount > 0 },
+      ]
+    : [
+        { label: '今すぐ対応', value: `${todaySummary.urgentActionCount}件`, danger: todaySummary.urgentActionCount > 0 },
+        { label: '回答超過', value: `${todaySummary.waitingOverdueCount}件`, danger: todaySummary.waitingOverdueCount > 0 },
+        { label: '待ち日付未設定', value: `${todaySummary.waitingNoDateCount}件`, danger: todaySummary.waitingNoDateCount > 0 },
+        { label: '進行中', value: `${todaySummary.doingCount}件` },
+        { label: 'PJ連動', value: `${todaySummary.projectCount}件` },
+      ];
+
+  return (
+    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">{mode === 'review' ? 'Review補助' : 'Today補助'}</h3>
+          <p className="mt-1 text-[11px] text-slate-500">
+            {mode === 'review'
+              ? '上部から外した補助情報を左下に集約しています。'
+              : '実行前の絞り込みと優先候補の確認用です。'}
+          </p>
+        </div>
+        {mode === 'review' ? (
+          <label className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-1.5 text-[11px] font-medium text-slate-700">
+            <input
+              type="checkbox"
+              checked={reviewTargetOnly}
+              onChange={(event) => onReviewTargetOnlyChange(event.target.checked)}
+              className="h-3.5 w-3.5 rounded border-slate-300"
+            />
+            処理対象のみ表示
+          </label>
+        ) : null}
+      </div>
+
+      <div className="mt-3 grid gap-1.5 sm:grid-cols-2">
+        {stats.map((item) => (
+          <CompactContextStat key={item.label} label={item.label} value={item.value} danger={item.danger} compact />
+        ))}
+      </div>
+
+      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <h4 className="text-xs font-semibold text-slate-900">{mode === 'review' ? 'Review絞り込み' : 'クイック選択'}</h4>
+          <span className="text-[10px] text-slate-500">
+            {mode === 'review' ? `PJ連動 ${reviewTaskProjectCount}件 / 要確認PJ ${reviewProjectCount}件` : '一括選択'}
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {(mode === 'review' ? reviewQuickSelections : todayQuickSelections).map((preset) => (
+            <QuickSelectButton
+              key={preset.key}
+              label={preset.label}
+              count={mode === 'review' ? (preset as (typeof reviewQuickSelections)[number]).count : preset.taskIds.length}
+              disabled={preset.taskIds.length === 0}
+              onClick={() => onApplySelectionPreset(preset.taskIds)}
+            />
+          ))}
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -3980,21 +4081,25 @@ function CompactContextStat({
   label,
   value,
   danger = false,
+  compact = false,
+  className,
 }: {
   label: string;
   value: string;
   danger?: boolean;
+  compact?: boolean;
+  className?: string;
 }) {
   const match = value.match(/^(\d+)(.*)$/);
   const leading = match?.[1] ?? value;
   const trailing = match?.[2] ?? '';
 
   return (
-    <article className={`rounded-xl px-2.5 py-1 shadow-sm ring-1 ${danger ? 'bg-rose-50 ring-rose-200/90' : 'bg-slate-50 ring-slate-200/80'}`}>
+    <article className={`rounded-xl shadow-sm ring-1 ${compact ? 'px-2 py-0.5' : 'px-2.5 py-1'} ${danger ? 'bg-rose-50 ring-rose-200/90' : 'bg-slate-50 ring-slate-200/80'} ${className ?? ''}`}>
       <div className="flex items-center justify-between gap-3">
-        <p className="text-[10px] text-slate-600 sm:text-[11px]">{label}</p>
+        <p className={`${compact ? 'text-[9px] sm:text-[10px]' : 'text-[10px] sm:text-[11px]'} text-slate-600`}>{label}</p>
         <p className={`flex items-baseline gap-0.5 tabular-nums ${danger ? 'text-rose-700' : 'text-slate-900'}`}>
-          <span className="text-base font-semibold tracking-tight sm:text-lg">{leading}</span>
+          <span className={`${compact ? 'text-sm sm:text-base' : 'text-base sm:text-lg'} font-semibold tracking-tight`}>{leading}</span>
           <span className="text-[11px] font-medium text-slate-500">{trailing}</span>
         </p>
       </div>
