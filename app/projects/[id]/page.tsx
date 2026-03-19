@@ -43,6 +43,8 @@ import {
   isWaitingWithoutResponseDate,
   toDateInputValue,
 } from '@/lib/tasks/presentation';
+import { parseQuickCaptureInput } from '@/lib/tasks/quick-capture';
+import { compareTasksByDuePriority } from '@/lib/tasks/task-ordering';
 import { buildHistoryRows, buildTaskExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildStalledTaskList, buildTaskFocusDeck, buildTaskStalledBuckets, isDoingStale } from '@/lib/tasks/focus';
@@ -86,6 +88,8 @@ export default function ProjectDetailPage() {
   const [editMessage, setEditMessage] = useState<string | null>(null);
 
   const [newAction, setNewAction] = useState(defaultNewActionState);
+  const [quickActionInput, setQuickActionInput] = useState('');
+  const [savingQuickAction, setSavingQuickAction] = useState(false);
   const [savingAction, setSavingAction] = useState(false);
   const [newActionError, setNewActionError] = useState<string | null>(null);
   const [newActionMessage, setNewActionMessage] = useState<string | null>(null);
@@ -158,10 +162,15 @@ export default function ProjectDetailPage() {
     void fetchProjectDetail();
   }, [fetchProjectDetail]);
 
+  const sortedLinkedTasks = useMemo(
+    () => [...linkedTasks].sort(compareTasksByDuePriority),
+    [linkedTasks],
+  );
+
   const groupedLinkedTasks = useMemo(() => {
     return TASK_PROGRESS_ORDER.reduce(
       (acc, status) => {
-        acc[status] = linkedTasks.filter((task) => task.status === status);
+        acc[status] = sortedLinkedTasks.filter((task) => task.status === status);
         return acc;
       },
       {
@@ -171,7 +180,7 @@ export default function ProjectDetailPage() {
         done: [] as Task[],
       },
     );
-  }, [linkedTasks]);
+  }, [sortedLinkedTasks]);
 
   const overdueCount = useMemo(() => {
     return linkedTasks.filter((task) => isOverdue(task.due_date) && task.status !== 'done').length;
@@ -234,10 +243,10 @@ export default function ProjectDetailPage() {
     return items;
   }, [dueSoonCount, linkedTasks.length, project, waitingNoDateCount, waitingOverdueCount]);
 
-  const focusedLinkedTasks = useMemo(() => buildTaskFocusDeck(linkedTasks, 3), [linkedTasks]);
+  const focusedLinkedTasks = useMemo(() => buildTaskFocusDeck(sortedLinkedTasks, 3), [sortedLinkedTasks]);
 
-  const stalledLinkedTaskBuckets = useMemo(() => buildTaskStalledBuckets(linkedTasks), [linkedTasks]);
-  const stalledLinkedTasks = useMemo(() => buildStalledTaskList(linkedTasks, 4), [linkedTasks]);
+  const stalledLinkedTaskBuckets = useMemo(() => buildTaskStalledBuckets(sortedLinkedTasks), [sortedLinkedTasks]);
+  const stalledLinkedTasks = useMemo(() => buildStalledTaskList(sortedLinkedTasks, 4), [sortedLinkedTasks]);
 
   const toggleTaskSectionExpanded = useCallback((key: string) => {
     setExpandedTaskSectionKeys((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -465,6 +474,67 @@ export default function ProjectDetailPage() {
     });
     setSavingAction(false);
   }
+
+  const handleQuickActionCapture = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!project) return;
+
+      const parsed = parseQuickCaptureInput(quickActionInput, {
+        allowGtdCommands: false,
+        lockGtdCategory: 'next_action',
+      });
+
+      if (!parsed.title) {
+        setNewActionError('タイトルを入力してください');
+        setNewActionMessage(null);
+        return;
+      }
+
+      setSavingQuickAction(true);
+      setNewActionError(null);
+      setNewActionMessage(null);
+
+      const { data, error: insertError } = await getSupabaseClient()
+        .from('tasks')
+        .insert({
+          user_id: project.user_id,
+          title: parsed.title,
+          description: null,
+          assignee: null,
+          priority: 'medium',
+          importance: 'medium',
+          urgency: 'medium',
+          due_date: parsed.dueDate,
+          status: parsed.status,
+          gtd_category: 'next_action',
+          project_task_id: project.id,
+          waiting_response_date: parsed.waitingResponseDate,
+        })
+        .select('*')
+        .single();
+
+      if (insertError) {
+        setNewActionError(insertError.message);
+        setSavingQuickAction(false);
+        return;
+      }
+
+      setLinkedTasks((prev) => [data as Task, ...prev]);
+      setQuickActionInput('');
+      setNewActionMessage(`クイック追加: 「${parsed.title}」を保存しました`);
+      appendHistoryEntry({
+        scope: 'project_detail',
+        action: 'quick_capture',
+        summary: `クイック追加: ${parsed.title}`,
+        detail: parsed.appliedTags.length > 0 ? parsed.appliedTags.join(' / ') : 'タイトルのみ',
+        tone: 'success',
+        contextId: project.id,
+      });
+      setSavingQuickAction(false);
+    },
+    [appendHistoryEntry, project, quickActionInput],
+  );
 
   async function handleUpdateLinkedTaskStatus(task: Task, nextStatus: TaskProgress) {
     if (task.status === nextStatus) return;
@@ -1064,6 +1134,29 @@ export default function ProjectDetailPage() {
             <p className="mt-1 text-sm text-slate-500">
               このプロジェクトに紐づく次アクションを直接追加します。
             </p>
+
+            <form className="mt-4 space-y-3" onSubmit={handleQuickActionCapture}>
+              <input
+                value={quickActionInput}
+                onChange={(event) => setQuickActionInput(event.target.value)}
+                placeholder="1行で追加。 /wait と YYYY-MM-DD / 明日 に対応"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+              />
+              <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+                <span>GTDはこのProjectの次アクション固定です。解析できなくてもタイトルだけで保存します。</span>
+                <button
+                  type="submit"
+                  disabled={savingQuickAction}
+                  className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {savingQuickAction ? '保存中...' : 'Enterで追加'}
+                </button>
+              </div>
+            </form>
+
+            <div className="mt-4 border-t border-slate-200 pt-4">
+              <p className="text-sm font-medium text-slate-700">詳細入力で追加</p>
+            </div>
 
             {newActionError ? (
               <p className="mt-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">

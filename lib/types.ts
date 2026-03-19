@@ -50,6 +50,15 @@ export const TASK_GTD_LABELS: Record<TaskGtdCategory, string> = {
 export const WORK_SESSION_ENTRY_TYPES = ["timer", "manual_adjustment"] as const;
 export type WorkSessionEntryType = (typeof WORK_SESSION_ENTRY_TYPES)[number];
 
+export const TASK_TEMPLATE_RECURRENCE_VALUES = ["daily", "weekly", "monthly"] as const;
+export type TaskTemplateRecurrence = (typeof TASK_TEMPLATE_RECURRENCE_VALUES)[number];
+
+export const TASK_TEMPLATE_RECURRENCE_LABELS: Record<TaskTemplateRecurrence, string> = {
+  daily: "毎日",
+  weekly: "毎週",
+  monthly: "毎月",
+};
+
 export type Task = {
   id: string;
   user_id: string;
@@ -68,6 +77,21 @@ export type Task = {
   tracked_minutes: number;
   manual_adjustment_minutes: number;
   session_started_at: string | null;
+  template_id: string | null;
+  template_period_key: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskTemplate = {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string | null;
+  recurrence_type: TaskTemplateRecurrence;
+  default_gtd_category: Exclude<TaskGtdCategory, 'project'>;
+  start_date: string;
+  is_active: boolean;
   created_at: string;
   updated_at: string;
 };

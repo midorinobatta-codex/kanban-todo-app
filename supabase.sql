@@ -204,3 +204,85 @@ with check (auth.uid() = user_id);
 create policy "Allow delete for authenticated owner" on public.task_work_sessions
 for delete to authenticated
 using (auth.uid() = user_id);
+
+create table if not exists public.task_templates (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  title text not null,
+  description text,
+  recurrence_type text not null default 'weekly',
+  default_gtd_category text not null default 'next_action',
+  start_date date not null default current_date,
+  is_active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.task_templates add column if not exists user_id uuid references auth.users(id) on delete cascade;
+alter table public.task_templates alter column user_id set default auth.uid();
+alter table public.task_templates add column if not exists title text;
+alter table public.task_templates add column if not exists description text;
+alter table public.task_templates add column if not exists recurrence_type text not null default 'weekly';
+alter table public.task_templates add column if not exists default_gtd_category text not null default 'next_action';
+alter table public.task_templates add column if not exists start_date date not null default current_date;
+alter table public.task_templates add column if not exists is_active boolean not null default true;
+
+update public.task_templates
+set start_date = current_date
+where start_date is null;
+
+alter table public.task_templates drop constraint if exists task_templates_recurrence_type_check;
+alter table public.task_templates
+add constraint task_templates_recurrence_type_check
+check (recurrence_type in ('daily', 'weekly', 'monthly'));
+
+alter table public.task_templates drop constraint if exists task_templates_default_gtd_category_check;
+alter table public.task_templates
+add constraint task_templates_default_gtd_category_check
+check (default_gtd_category in ('next_action', 'delegated', 'someday'));
+
+create index if not exists task_templates_user_id_idx on public.task_templates(user_id);
+create index if not exists task_templates_user_active_idx on public.task_templates(user_id, is_active);
+
+drop trigger if exists set_task_templates_updated_at on public.task_templates;
+create trigger set_task_templates_updated_at
+before update on public.task_templates
+for each row execute procedure public.set_updated_at();
+
+alter table public.task_templates enable row level security;
+
+drop policy if exists "Allow read for authenticated owner" on public.task_templates;
+drop policy if exists "Allow insert for authenticated owner" on public.task_templates;
+drop policy if exists "Allow update for authenticated owner" on public.task_templates;
+drop policy if exists "Allow delete for authenticated owner" on public.task_templates;
+
+create policy "Allow read for authenticated owner" on public.task_templates
+for select to authenticated
+using (auth.uid() = user_id);
+
+create policy "Allow insert for authenticated owner" on public.task_templates
+for insert to authenticated
+with check (auth.uid() = user_id);
+
+create policy "Allow update for authenticated owner" on public.task_templates
+for update to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "Allow delete for authenticated owner" on public.task_templates
+for delete to authenticated
+using (auth.uid() = user_id);
+
+alter table public.tasks add column if not exists template_id uuid;
+alter table public.tasks add column if not exists template_period_key text;
+
+alter table public.tasks drop constraint if exists tasks_template_id_fkey;
+alter table public.tasks
+add constraint tasks_template_id_fkey
+foreign key (template_id) references public.task_templates(id) on delete set null;
+
+create index if not exists tasks_template_id_idx on public.tasks(template_id);
+create unique index if not exists tasks_user_template_period_unique_idx
+on public.tasks(user_id, template_id, template_period_key)
+where template_id is not null and template_period_key is not null;
+
