@@ -2481,7 +2481,7 @@ export function KanbanBoard({
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-[106rem] flex-col gap-6 px-4 py-6 sm:px-6">
-      <header className="sticky top-0 z-40 -mx-4 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6">
+      <header className="sticky top-0 z-[45] -mx-4 px-4 py-1 backdrop-blur sm:-mx-6 sm:px-6">
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white/95 px-4 py-3 shadow-sm ring-1 ring-slate-900/5 sm:px-5">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold text-slate-900">FlowFocus</h1>
