@@ -135,7 +135,7 @@ type TodayGroupKey =
 
 type TaskSortKey = 'dueSoon' | 'newest' | 'importanceHigh' | 'urgencyHigh';
 
-type BoardUtilityPanel = 'task' | 'template' | null;
+type BoardUtilityPanel = 'template' | null;
 
 type BoardPreferences = {
   keyword: string;
@@ -692,6 +692,7 @@ export function KanbanBoard({
   const [showCompletedInKanban, setShowCompletedInKanban] = useState(false);
   const newTaskTitleInputRef = useRef<HTMLInputElement | null>(null);
   const templateTitleInputRef = useRef<HTMLInputElement | null>(null);
+  const newTaskFormSectionRef = useRef<HTMLElement | null>(null);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
   const { projects } = useProjects();
@@ -778,7 +779,7 @@ export function KanbanBoard({
   useEffect(() => {
     if (!activeUtilityPanel) return;
 
-    const targetRef = activeUtilityPanel === 'task' ? newTaskTitleInputRef : templateTitleInputRef;
+    const targetRef = templateTitleInputRef;
 
     const focusInput = () => {
       const input = targetRef.current;
@@ -2092,7 +2093,6 @@ export function KanbanBoard({
   const openProjectQuickAdd = useCallback((projectId: string) => {
     const projectTask = projectTaskMap[projectId];
     const projectTitle = projectTask?.title ?? projects.find((project) => project.id === projectId)?.title ?? 'プロジェクト';
-    setActiveUtilityPanel('task');
     setNewTask((prev) => ({
       ...prev,
       title: '',
@@ -2103,7 +2103,8 @@ export function KanbanBoard({
     }));
     setNotice(`「${projectTitle}」向けの次アクション追加フォームを開きました。`);
     window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      newTaskFormSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      newTaskTitleInputRef.current?.focus();
     });
   }, [projectTaskMap, projects]);
 
@@ -2114,7 +2115,8 @@ export function KanbanBoard({
     setTodayScreenMode('today');
     setNotice(`「${projectTitle}」を今日画面の候補として絞り込みました。`);
     window.requestAnimationFrame(() => {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      newTaskFormSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      newTaskTitleInputRef.current?.focus();
     });
   }, [projectTaskMap, projects]);
 
@@ -2567,6 +2569,135 @@ export function KanbanBoard({
 
       <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <aside className="order-2 space-y-6 xl:order-1 xl:sticky xl:top-32 xl:self-start">
+          <section ref={newTaskFormSectionRef} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">通常追加</h2>
+                <p className="mt-1 text-xs text-slate-500">左サイドでそのまま入力して追加できます。</p>
+              </div>
+            </div>
+
+            <form onSubmit={(e) => void addTask(e)} className="mt-4 space-y-3">
+              <input
+                required
+                ref={newTaskTitleInputRef}
+                value={newTask.title}
+                onChange={(e) => setNewTask((prev) => ({ ...prev, title: e.target.value }))}
+                placeholder="タイトル"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+
+              <input
+                value={newTask.assignee}
+                onChange={(e) => setNewTask((prev) => ({ ...prev, assignee: e.target.value }))}
+                placeholder="担当者"
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+
+              <textarea
+                value={newTask.description}
+                onChange={(e) => setNewTask((prev) => ({ ...prev, description: e.target.value }))}
+                placeholder="説明"
+                rows={4}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
+                <select
+                  value={newTask.importance}
+                  onChange={(e) =>
+                    setNewTask((prev) => ({
+                      ...prev,
+                      importance: e.target.value as TaskImportance,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  {TASK_IMPORTANCE_VALUES.map((importance) => (
+                    <option key={importance} value={importance}>
+                      重要度: {IMPORTANCE_LABELS[importance]}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={newTask.urgency}
+                  onChange={(e) =>
+                    setNewTask((prev) => ({
+                      ...prev,
+                      urgency: e.target.value as TaskUrgency,
+                    }))
+                  }
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  {TASK_URGENCY_VALUES.map((urgency) => (
+                    <option key={urgency} value={urgency}>
+                      緊急度: {URGENCY_LABELS[urgency]}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <input
+                type="date"
+                value={newTask.dueDate}
+                onChange={(e) => setNewTask((prev) => ({ ...prev, dueDate: e.target.value }))}
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              />
+
+              <select
+                value={newTask.gtdCategory}
+                onChange={(e) =>
+                  setNewTask((prev) => {
+                    const gtdCategory = e.target.value as TaskGtdCategory;
+                    return {
+                      ...prev,
+                      gtdCategory,
+                      projectTaskId: gtdCategory === 'next_action' ? prev.projectTaskId : '',
+                    };
+                  })
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+              >
+                {TASK_GTD_VALUES.map((category) => (
+                  <option key={category} value={category}>
+                    GTD: {TASK_GTD_LABELS[category]}
+                  </option>
+                ))}
+              </select>
+
+              {newTask.gtdCategory === 'next_action' ? (
+                <select
+                  value={newTask.projectTaskId}
+                  onChange={(e) => setNewTask((prev) => ({ ...prev, projectTaskId: e.target.value }))}
+                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                >
+                  <option value="">関連プロジェクト: 未設定</option>
+                  {projectTasks.map((projectTask) => (
+                    <option key={projectTask.id} value={projectTask.id}>
+                      関連プロジェクト: {projectTask.title}
+                    </option>
+                  ))}
+                </select>
+              ) : null}
+
+              <button
+                type="submit"
+                disabled={saving}
+                className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? '保存中...' : 'タスクを追加'}
+              </button>
+            </form>
+          </section>
+
+          {notice ? (
+            <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">補助メッセージ</p>
+              <p className="mt-2 text-sm leading-6 text-emerald-700">{notice}</p>
+            </section>
+          ) : null}
+
           <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -2693,13 +2824,6 @@ export function KanbanBoard({
             </div>
           </section>
 
-          {notice ? (
-            <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">補助メッセージ</p>
-              <p className="mt-2 text-sm leading-6 text-emerald-700">{notice}</p>
-            </section>
-          ) : null}
-
           {viewMode === 'today' ? (
             <TodayReviewSupportPanel
               mode={todayScreenMode}
@@ -2754,13 +2878,11 @@ export function KanbanBoard({
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
                     <button
                       type="button"
-                      onClick={() => setActiveUtilityPanel((prev) => (prev === 'task' ? null : 'task'))}
-                      aria-expanded={activeUtilityPanel === 'task'}
-                      className={`rounded-lg border px-3.5 py-2.5 text-sm font-medium transition ${
-                        activeUtilityPanel === 'task'
-                          ? 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
-                          : 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                      }`}
+                      onClick={() => {
+                        newTaskFormSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        window.requestAnimationFrame(() => newTaskTitleInputRef.current?.focus());
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
                     >
                       通常追加
                     </button>
@@ -2787,143 +2909,6 @@ export function KanbanBoard({
                     onClick={() => setActiveUtilityPanel(null)}
                   />
                   <div className="absolute inset-x-0 top-full z-40 mt-2 xl:left-auto xl:right-0 xl:w-[56rem]">
-                    {activeUtilityPanel === 'task' ? (
-                      <section className="max-h-[75vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
-                        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                          <div>
-                            <h2 className="text-base font-semibold text-slate-900">通常追加</h2>
-                            <p className="mt-1 text-xs text-slate-500">既存フォームはそのまま使えます。必要な時だけ開く構成です。</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setActiveUtilityPanel(null)}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-50"
-                          >
-                            閉じる
-                          </button>
-                        </div>
-
-                        <form onSubmit={(e) => void addTask(e)} className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">
-                          <div className="space-y-3">
-                            <input
-                              required
-                              ref={newTaskTitleInputRef}
-                              value={newTask.title}
-                              onChange={(e) => setNewTask((prev) => ({ ...prev, title: e.target.value }))}
-                              placeholder="タイトル"
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                            />
-
-                            <input
-                              value={newTask.assignee}
-                              onChange={(e) => setNewTask((prev) => ({ ...prev, assignee: e.target.value }))}
-                              placeholder="担当者"
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                            />
-
-                            <textarea
-                              value={newTask.description}
-                              onChange={(e) => setNewTask((prev) => ({ ...prev, description: e.target.value }))}
-                              placeholder="説明"
-                              rows={4}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                            />
-                          </div>
-
-                          <div className="space-y-3">
-                            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-                              <select
-                                value={newTask.importance}
-                                onChange={(e) =>
-                                  setNewTask((prev) => ({
-                                    ...prev,
-                                    importance: e.target.value as TaskImportance,
-                                  }))
-                                }
-                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                              >
-                                {TASK_IMPORTANCE_VALUES.map((importance) => (
-                                  <option key={importance} value={importance}>
-                                    重要度: {IMPORTANCE_LABELS[importance]}
-                                  </option>
-                                ))}
-                              </select>
-
-                              <select
-                                value={newTask.urgency}
-                                onChange={(e) =>
-                                  setNewTask((prev) => ({
-                                    ...prev,
-                                    urgency: e.target.value as TaskUrgency,
-                                  }))
-                                }
-                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                              >
-                                {TASK_URGENCY_VALUES.map((urgency) => (
-                                  <option key={urgency} value={urgency}>
-                                    緊急度: {URGENCY_LABELS[urgency]}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-
-                            <input
-                              type="date"
-                              value={newTask.dueDate}
-                              onChange={(e) => setNewTask((prev) => ({ ...prev, dueDate: e.target.value }))}
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                            />
-
-                            <select
-                              value={newTask.gtdCategory}
-                              onChange={(e) =>
-                                setNewTask((prev) => {
-                                  const gtdCategory = e.target.value as TaskGtdCategory;
-                                  return {
-                                    ...prev,
-                                    gtdCategory,
-                                    projectTaskId: gtdCategory === 'next_action' ? prev.projectTaskId : '',
-                                  };
-                                })
-                              }
-                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                            >
-                              {TASK_GTD_VALUES.map((category) => (
-                                <option key={category} value={category}>
-                                  GTD: {TASK_GTD_LABELS[category]}
-                                </option>
-                              ))}
-                            </select>
-
-                            {newTask.gtdCategory === 'next_action' ? (
-                              <select
-                                value={newTask.projectTaskId}
-                                onChange={(e) =>
-                                  setNewTask((prev) => ({ ...prev, projectTaskId: e.target.value }))
-                                }
-                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                              >
-                                <option value="">関連プロジェクト: 未設定</option>
-                                {projectTasks.map((projectTask) => (
-                                  <option key={projectTask.id} value={projectTask.id}>
-                                    関連プロジェクト: {projectTask.title}
-                                  </option>
-                                ))}
-                              </select>
-                            ) : null}
-
-                            <button
-                              type="submit"
-                              disabled={saving}
-                              className="w-full rounded-lg bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-60"
-                            >
-                              {saving ? '保存中...' : 'タスクを追加'}
-                            </button>
-                          </div>
-                        </form>
-                      </section>
-                    ) : null}
-
                     {activeUtilityPanel === 'template' ? (
                       <section className="max-h-[75vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
                         <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
