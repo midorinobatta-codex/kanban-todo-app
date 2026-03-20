@@ -149,6 +149,8 @@ type BoardPreferences = {
   projectFilterId: string;
 };
 
+const KANBAN_COMPLETED_INITIAL_VISIBLE_COUNT = 5;
+
 const TASK_SORT_LABELS: Record<TaskSortKey, string> = {
   newest: '新しい順',
   dueSoon: '期限順（標準）',
@@ -687,6 +689,7 @@ export function KanbanBoard({
   const [bulkWaitingResponseDate, setBulkWaitingResponseDate] = useState('');
   const [expandedSectionKeys, setExpandedSectionKeys] = useState<Record<string, boolean>>({});
   const [reviewTargetOnly, setReviewTargetOnly] = useState(true);
+  const [showCompletedInKanban, setShowCompletedInKanban] = useState(false);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
   const { projects } = useProjects();
@@ -999,7 +1002,14 @@ export function KanbanBoard({
   const groupedTasks = useMemo(() => {
     return TASK_PROGRESS_ORDER.reduce(
       (acc, status) => {
-        acc[status] = visibleTasksForNormalViews.filter((task) => task.status === status);
+        const tasksForStatus = visibleTasksForNormalViews.filter((task) => task.status === status);
+        acc[status] =
+          status === 'done'
+            ? [...tasksForStatus].sort(
+                (left, right) =>
+                  new Date(right.updated_at).getTime() - new Date(left.updated_at).getTime(),
+              )
+            : tasksForStatus;
         return acc;
       },
       {
@@ -1012,7 +1022,7 @@ export function KanbanBoard({
   }, [visibleTasksForNormalViews]);
 
   const matrixTasks = useMemo(() => {
-    return visibleTasksForNormalViews.reduce(
+    return visibleTasksForNormalViews.filter((task) => task.status !== 'done').reduce(
       (acc, task) => {
         const isImportantHigh = task.importance === 'high';
         const isUrgencyHigh = task.urgency === 'high';
@@ -1039,28 +1049,33 @@ export function KanbanBoard({
   }, [visibleTasksForNormalViews]);
 
   const gtdTasks = useMemo(() => {
-    return filteredTasks.reduce(
-      (acc, task) => {
-        if (task.gtd_category === 'next_action' && task.project_task_id) {
-          return acc;
-        }
+    return filteredTasks
+      .filter((task) => task.status !== 'done')
+      .reduce(
+        (acc, task) => {
+          if (task.gtd_category === 'next_action' && task.project_task_id) {
+            return acc;
+          }
 
-        acc[task.gtd_category].push(task);
-        return acc;
-      },
-      {
-        next_action: [] as Task[],
-        delegated: [] as Task[],
-        project: [] as Task[],
-        someday: [] as Task[],
-      },
-    );
+          acc[task.gtd_category].push(task);
+          return acc;
+        },
+        {
+          next_action: [] as Task[],
+          delegated: [] as Task[],
+          project: [] as Task[],
+          someday: [] as Task[],
+        },
+      );
   }, [filteredTasks]);
 
   const projectChildrenByProjectId = useMemo(() => {
     return sortTasks(
       filteredTasks.filter(
-        (task) => task.gtd_category === 'next_action' && Boolean(task.project_task_id),
+        (task) =>
+          task.status !== 'done' &&
+          task.gtd_category === 'next_action' &&
+          Boolean(task.project_task_id),
       ),
       sortKey,
     ).reduce(
@@ -1106,10 +1121,13 @@ export function KanbanBoard({
 
   const visibleTaskCount = useMemo(() => {
     if (viewMode === 'gtd') {
-      return filteredTasks.length;
+      return filteredTasks.filter((task) => task.status !== 'done').length;
     }
-    return visibleTasksForNormalViews.length;
-  }, [filteredTasks.length, viewMode, visibleTasksForNormalViews.length]);
+    if (viewMode === 'kanban' && showCompletedInKanban) {
+      return visibleTasksForNormalViews.length;
+    }
+    return visibleTasksForNormalViews.filter((task) => task.status !== 'done').length;
+  }, [filteredTasks, showCompletedInKanban, viewMode, visibleTasksForNormalViews]);
 
   const activeFilterChips = useMemo(() => {
     const chips: string[] = [];
@@ -3462,18 +3480,49 @@ export function KanbanBoard({
                 <TaskGroupCard
                   key={status}
                   title={TASK_PROGRESS_LABELS[status]}
-                  subtitle={`${groupedTasks[status].length}件 / ドラッグでも移動できます`}
+                  subtitle={
+                    status === 'done'
+                      ? showCompletedInKanban
+                        ? `${groupedTasks[status].length}件 / 直近から表示`
+                        : `${groupedTasks[status].length}件 / 既定では非表示`
+                      : `${groupedTasks[status].length}件 / ドラッグでも移動できます`
+                  }
+                  headerAction={
+                    status === 'done' ? (
+                      <button
+                        type="button"
+                        onClick={() => setShowCompletedInKanban((prev) => !prev)}
+                        className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                          showCompletedInKanban
+                            ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                            : 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
+                        }`}
+                      >
+                        {showCompletedInKanban ? '完了を隠す' : '完了を表示'}
+                      </button>
+                    ) : null
+                  }
                   dropTargetStatus={status}
                   dragActive={dragOverStatus === status}
                   onDragOver={(event) => handleColumnDragOver(event, status)}
                   onDragLeave={() => setDragOverStatus((prev) => (prev === status ? null : prev))}
                   onDrop={(event) => void handleColumnDrop(event, status)}
                 >
-                  {groupedTasks[status].length === 0 ? (
+                  {status === 'done' && !showCompletedInKanban ? (
+                    <EmptyState label="完了タスクは非表示です。必要なときだけ表示できます。" />
+                  ) : groupedTasks[status].length === 0 ? (
                     <EmptyState label="ここにドラッグして移動できます" />
                   ) : (
                     <div className="space-y-3">
-                      {getLimitedItems(`kanban-${status}`, groupedTasks[status]).map((task) => (
+                      {(
+                        status === 'done'
+                          ? getLimitedItems(
+                              `kanban-${status}`,
+                              groupedTasks[status],
+                              KANBAN_COMPLETED_INITIAL_VISIBLE_COUNT,
+                            )
+                          : getLimitedItems(`kanban-${status}`, groupedTasks[status])
+                      ).map((task) => (
                         <TaskCard
                           key={task.id}
                           task={task}
@@ -3501,7 +3550,18 @@ export function KanbanBoard({
                       ))}
 
                       <SectionExpandButton
-                        hiddenCount={groupedTasks[status].length - getLimitedItems(`kanban-${status}`, groupedTasks[status]).length}
+                        hiddenCount={
+                          groupedTasks[status].length -
+                          (
+                            status === 'done'
+                              ? getLimitedItems(
+                                  `kanban-${status}`,
+                                  groupedTasks[status],
+                                  KANBAN_COMPLETED_INITIAL_VISIBLE_COUNT,
+                                )
+                              : getLimitedItems(`kanban-${status}`, groupedTasks[status])
+                          ).length
+                        }
                         expanded={Boolean(expandedSectionKeys[`kanban-${status}`])}
                         onToggle={() => toggleSectionExpanded(`kanban-${status}`)}
                       />
@@ -4167,6 +4227,7 @@ function TaskGroupCard({
   title,
   subtitle,
   children,
+  headerAction,
   dropTargetStatus,
   dragActive = false,
   onDragOver,
@@ -4176,6 +4237,7 @@ function TaskGroupCard({
   title: string;
   subtitle: string;
   children: ReactNode;
+  headerAction?: ReactNode;
   dropTargetStatus?: TaskProgress;
   dragActive?: boolean;
   onDragOver?: (event: DragEvent<HTMLDivElement>) => void;
@@ -4191,9 +4253,12 @@ function TaskGroupCard({
       onDragLeave={dropTargetStatus ? onDragLeave : undefined}
       onDrop={dropTargetStatus ? onDrop : undefined}
     >
-      <div className="mb-4">
-        <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
-        <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
+          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+        </div>
+        {headerAction ? <div>{headerAction}</div> : null}
       </div>
       <div className="space-y-3">{children}</div>
     </article>
@@ -5090,6 +5155,7 @@ type TaskCardProps = {
 function TaskCard({
   task,
   disabled,
+  onUpdateStatus,
   onEdit,
   onDragStart,
   onDragEnd,
@@ -5343,6 +5409,16 @@ function TaskCard({
           >
             補正
           </button>
+          {task.status !== 'done' ? (
+            <button
+              type="button"
+              onClick={() => void onUpdateStatus?.(task, 'done')}
+              disabled={disabled}
+              className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              完了
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
