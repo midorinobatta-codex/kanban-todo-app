@@ -690,6 +690,8 @@ export function KanbanBoard({
   const [expandedSectionKeys, setExpandedSectionKeys] = useState<Record<string, boolean>>({});
   const [reviewTargetOnly, setReviewTargetOnly] = useState(true);
   const [showCompletedInKanban, setShowCompletedInKanban] = useState(false);
+  const newTaskTitleInputRef = useRef<HTMLInputElement | null>(null);
+  const templateTitleInputRef = useRef<HTMLInputElement | null>(null);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
   const { projects } = useProjects();
@@ -771,6 +773,24 @@ export function KanbanBoard({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeUtilityPanel]);
+
+  useEffect(() => {
+    if (!activeUtilityPanel) return;
+
+    const targetRef = activeUtilityPanel === 'task' ? newTaskTitleInputRef : templateTitleInputRef;
+
+    const focusInput = () => {
+      const input = targetRef.current;
+      if (!input) return;
+      input.focus();
+      const end = input.value.length;
+      input.setSelectionRange(end, end);
+    };
+
+    focusInput();
+    const rafId = window.requestAnimationFrame(focusInput);
+    return () => window.cancelAnimationFrame(rafId);
   }, [activeUtilityPanel]);
 
   useEffect(() => {
@@ -2787,6 +2807,7 @@ export function KanbanBoard({
                           <div className="space-y-3">
                             <input
                               required
+                              ref={newTaskTitleInputRef}
                               value={newTask.title}
                               onChange={(e) => setNewTask((prev) => ({ ...prev, title: e.target.value }))}
                               placeholder="タイトル"
@@ -2933,6 +2954,7 @@ export function KanbanBoard({
 
                             <form onSubmit={(e) => void createTemplate(e)} className="mt-4 space-y-3">
                               <input
+                                ref={templateTitleInputRef}
                                 value={templateForm.title}
                                 onChange={(e) => setTemplateForm((prev) => ({ ...prev, title: e.target.value }))}
                                 placeholder="例: 週次レポート作成"

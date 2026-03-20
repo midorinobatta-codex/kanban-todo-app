@@ -104,6 +104,7 @@ export default function ProjectDetailPage() {
   const [bulkWaitingResponseDate, setBulkWaitingResponseDate] = useState('');
   const [expandedTaskSectionKeys, setExpandedTaskSectionKeys] = useState<Record<string, boolean>>({});
   const [pageNotice, setPageNotice] = useState<string | null>(null);
+  const newActionTitleInputRef = useRef<HTMLInputElement | null>(null);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
   const fetchProjectDetail = useCallback(async () => {
@@ -464,6 +465,7 @@ export default function ProjectDetailPage() {
     setLinkedTasks((prev) => [data as Task, ...prev]);
     setNewAction(defaultNewActionState);
     setNewActionMessage('次アクションを追加しました');
+    newActionTitleInputRef.current?.focus();
     appendHistoryEntry({
       scope: 'project_detail',
       action: 'add_next_action',
@@ -1172,6 +1174,7 @@ export default function ProjectDetailPage() {
 
             <form className="mt-4 space-y-4" onSubmit={handleAddNextAction}>
               <input
+                ref={newActionTitleInputRef}
                 value={newAction.title}
                 onChange={(event) =>
                   setNewAction((prev) => ({

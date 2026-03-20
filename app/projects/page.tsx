@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { FormEvent, KeyboardEvent, useDeferredValue, useEffect, useMemo, useState } from 'react';
+import { FormEvent, KeyboardEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useProjects } from '@/lib/hooks/use-projects';
 import type { CreateProjectInput, Project } from '@/lib/domain/project';
 import { AlertStrip, type AlertStripItem } from '@/components/ui/alert-strip';
@@ -140,6 +140,7 @@ export default function ProjectsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [projectRenderCount, setProjectRenderCount] = useState(24);
   const [pageNotice, setPageNotice] = useState<string | null>(null);
+  const newProjectTitleInputRef = useRef<HTMLInputElement | null>(null);
   const [pageError, setPageError] = useState<string | null>(null);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
@@ -296,6 +297,7 @@ export default function ProjectsPage() {
       await createProject({ title } as CreateProjectInput);
       setNewProjectTitle('');
       setPageNotice('プロジェクトを作成しました。');
+      newProjectTitleInputRef.current?.focus();
       appendHistoryEntry({
         scope: 'projects',
         action: 'create_project',
@@ -379,10 +381,12 @@ export default function ProjectsPage() {
 
             <form onSubmit={(e) => void handleCreateProject(e)} className="mt-4 space-y-3">
               <input
+                ref={newProjectTitleInputRef}
                 value={newProjectTitle}
                 onChange={(e) => setNewProjectTitle(e.target.value)}
                 placeholder="例: 展示会準備"
                 className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                autoFocus
               />
               <button
                 type="submit"

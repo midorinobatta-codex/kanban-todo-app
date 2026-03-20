@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 import type { CreateProjectInput } from '@/lib/domain/project';
 
 type ProjectFormProps = {
@@ -11,6 +11,7 @@ export function ProjectForm({ onSubmit }: ProjectFormProps) {
   const [title, setTitle] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -28,6 +29,7 @@ export function ProjectForm({ onSubmit }: ProjectFormProps) {
     try {
       await onSubmit({ title: trimmedTitle });
       setTitle('');
+      titleInputRef.current?.focus();
     } catch (err) {
       if (err instanceof Error) {
         setError(err.message);
@@ -54,11 +56,13 @@ export function ProjectForm({ onSubmit }: ProjectFormProps) {
       <label className="grid gap-2">
         <span className="text-sm font-medium text-slate-700">Project name</span>
         <input
+          ref={titleInputRef}
           type="text"
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           placeholder="例: 展示会準備"
           className="rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-slate-500"
+          autoFocus
           maxLength={100}
         />
       </label>

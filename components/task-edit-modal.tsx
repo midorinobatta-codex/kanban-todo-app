@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useState } from 'react';
+import { FormEvent, useEffect, useRef, useState } from 'react';
 import {
   IMPORTANCE_LABELS,
   TASK_GTD_LABELS,
@@ -65,11 +65,27 @@ export function TaskEditModal({
   onDelete,
 }: TaskEditModalProps) {
   const [values, setValues] = useState<TaskEditValues | null>(null);
+  const titleInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (open && task) {
       setValues(buildInitialValues(task));
     }
+  }, [open, task]);
+
+  useEffect(() => {
+    if (!open || !task) return;
+
+    const focusInput = () => {
+      const input = titleInputRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    };
+
+    focusInput();
+    const rafId = window.requestAnimationFrame(focusInput);
+    return () => window.cancelAnimationFrame(rafId);
   }, [open, task]);
 
   if (!open || !task || !values) return null;
@@ -111,6 +127,7 @@ export function TaskEditModal({
 
         <form onSubmit={(e) => void handleSubmit(e)} className="grid gap-3 md:grid-cols-2">
           <input
+            ref={titleInputRef}
             value={values.title}
             onChange={(e) =>
               setValues((prev) => (prev ? { ...prev, title: e.target.value } : prev))
