@@ -2494,7 +2494,12 @@ export function KanbanBoard({
             <div>
               <p className="text-xs font-semibold text-blue-700">作業中</p>
               <h2 className="text-base font-semibold text-slate-900">{activeSessionTask.title}</h2>
-              <p className="text-sm text-slate-600">経過 {activeSessionElapsedLabel ?? '0分'} / 累積 {formatMinutesTotal(getEffectiveTaskMinutes(activeSessionTask))}</p>
+              <p className="text-sm text-slate-600">
+                経過 {activeSessionElapsedLabel ?? '0分'}
+                {viewMode === 'today' && todayScreenMode === 'review'
+                  ? ` / 累積 ${formatMinutesTotal(getEffectiveTaskMinutes(activeSessionTask))}`
+                  : ''}
+              </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <button
@@ -2519,12 +2524,6 @@ export function KanbanBoard({
       {error ? (
         <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
           {error}
-        </p>
-      ) : null}
-
-      {notice ? (
-        <p className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-          {notice}
         </p>
       ) : null}
 
@@ -2655,6 +2654,13 @@ export function KanbanBoard({
               ) : null}
             </div>
           </section>
+
+          {notice ? (
+            <section className="rounded-2xl border border-slate-200 bg-slate-50/80 p-4 shadow-sm">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">補助メッセージ</p>
+              <p className="mt-2 text-sm leading-6 text-emerald-700">{notice}</p>
+            </section>
+          ) : null}
 
           {viewMode === 'today' ? (
             <TodayReviewSupportPanel
@@ -4009,6 +4015,8 @@ function ReviewTaskCard({
         ? 'border-amber-200 bg-amber-50 text-amber-700'
         : 'border-blue-200 bg-blue-50 text-blue-700';
 
+  const totalMinutes = getEffectiveTaskMinutes(task);
+
   return (
     <article className={`rounded-xl border p-2.5 shadow-sm ${tone === 'danger' ? 'border-rose-200 bg-rose-50/70' : tone === 'warning' ? 'border-amber-200 bg-amber-50/70' : 'border-slate-200 bg-white'}`}>
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -4021,6 +4029,9 @@ function ReviewTaskCard({
           </div>
           <p className="mt-1.5 text-sm font-semibold text-slate-900">{task.title}</p>
           <p className="mt-1 text-[11px] leading-4 text-slate-600">{detail}</p>
+          <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+            <TaskTimeSummary task={task} totalMinutes={totalMinutes} />
+          </div>
         </div>
         <div className="flex flex-wrap gap-1.5" data-no-card-click="true">
           <button type="button" onClick={onOpen} disabled={disabled} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50">開く</button>
@@ -4374,7 +4385,6 @@ function FeaturedFocusTaskCard({
         ? 'border-amber-200 bg-amber-50 text-amber-700'
         : 'border-blue-200 bg-blue-50 text-blue-700';
 
-  const totalMinutes = getEffectiveTaskMinutes(task);
   const sessionElapsedLabel = task.session_started_at
     ? formatMinutesTotal(diffMinutes(task.session_started_at, new Date(timeDisplayNow).toISOString()))
     : null;
@@ -4390,12 +4400,6 @@ function FeaturedFocusTaskCard({
       <h4 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">{title}</h4>
       <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
       <div className="mt-3 flex flex-wrap gap-2 text-xs">
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">累積: {formatMinutesTotal(totalMinutes)}</span>
-        {task.manual_adjustment_minutes !== 0 ? (
-          <span className={`rounded-md px-2 py-1 ${task.manual_adjustment_minutes > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>
-            補正: {formatMinutesTotal(task.manual_adjustment_minutes)}
-          </span>
-        ) : null}
         {task.session_started_at ? (
           <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">計測中: {sessionElapsedLabel}</span>
         ) : null}
@@ -4573,7 +4577,6 @@ function FocusTaskCard({
         ? 'border-amber-200 bg-amber-50 text-amber-700'
         : 'border-blue-200 bg-blue-50 text-blue-700';
 
-  const totalMinutes = getEffectiveTaskMinutes(task);
   const sessionElapsedLabel = task.session_started_at
     ? formatMinutesTotal(diffMinutes(task.session_started_at, new Date(timeDisplayNow).toISOString()))
     : null;
@@ -4593,7 +4596,6 @@ function FocusTaskCard({
       </div>
       <p className="mt-1 text-xs text-slate-600">{detail}</p>
       <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">累積: {formatMinutesTotal(totalMinutes)}</span>
         {task.session_started_at ? (
           <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">計測中: {sessionElapsedLabel}</span>
         ) : null}
@@ -4637,7 +4639,30 @@ function SectionExpandButton({
   );
 }
 
-type TaskCardMode = 'kanban' | 'matrix' | 'gtd';
+type TaskCardMode = 'kanban' | 'matrix' | 'gtd' | 'review';
+
+function TaskTimeSummary({
+  task,
+  totalMinutes,
+}: {
+  task: Task;
+  totalMinutes?: number;
+}) {
+  return (
+    <>
+      <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
+        累積: {formatMinutesTotal(totalMinutes ?? getEffectiveTaskMinutes(task))}
+      </span>
+
+      {task.manual_adjustment_minutes !== 0 ? (
+        <span className={`rounded-md px-2 py-1 ${task.manual_adjustment_minutes > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>
+          補正: {formatMinutesTotal(task.manual_adjustment_minutes)}
+        </span>
+      ) : null}
+    </>
+  );
+}
+
 
 function TodayTimeWorkspacePanel({
   todayKey,
@@ -5222,15 +5247,7 @@ function TaskCard({
           </>
         ) : null}
 
-        <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
-          累積: {formatMinutesTotal(totalMinutes)}
-        </span>
-
-        {task.manual_adjustment_minutes !== 0 ? (
-          <span className={`rounded-md px-2 py-1 ${task.manual_adjustment_minutes > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-200 text-slate-700'}`}>
-            補正: {formatMinutesTotal(task.manual_adjustment_minutes)}
-          </span>
-        ) : null}
+        {mode === 'review' ? <TaskTimeSummary task={task} totalMinutes={totalMinutes} /> : null}
 
         {task.session_started_at ? (
           <span className="rounded-md bg-blue-50 px-2 py-1 text-blue-700">
