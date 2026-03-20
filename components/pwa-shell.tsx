@@ -31,7 +31,13 @@ export default function PwaShell() {
 
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        void navigator.serviceWorker.register('/sw.js', { scope: '/' });
+        void navigator.serviceWorker.register('/sw.js', { scope: '/' }).then(async (registration) => {
+          await registration.update();
+
+          if (registration.waiting) {
+            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
       });
     }
 
