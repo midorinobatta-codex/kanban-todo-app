@@ -1,4 +1,5 @@
 import type { Project } from '@/lib/domain/project';
+import { buildProjectRelationshipIssue, hasBrokenNextCandidate } from '@/lib/tasks/relationships';
 import type { Task } from '@/lib/types';
 import {
   formatRelativeDueText,
@@ -31,6 +32,7 @@ export type TaskStalledBuckets = {
   waitingNoDate: Task[];
   doingStale: Task[];
   overdueTodo: Task[];
+  brokenNextCandidate: Task[];
 };
 
 export type ProjectStalledBuckets = {
@@ -39,6 +41,8 @@ export type ProjectStalledBuckets = {
   noStartedAt: Project[];
   noActions: Project[];
   waiting: Project[];
+  brokenNextCandidate: Project[];
+  noNextCandidate: Project[];
 };
 
 export type StalledTaskItem = {
@@ -73,7 +77,7 @@ export function isDoingStale(task: Task, staleDays = 3) {
   return sinceUpdated >= staleDays;
 }
 
-export function buildTaskStalledBuckets(tasks: Task[]): TaskStalledBuckets {
+export function buildTaskStalledBuckets(tasks: Task[], taskMap: Record<string, Task> = {}): TaskStalledBuckets {
   return tasks.reduce<TaskStalledBuckets>(
     (acc, task) => {
       if (task.status === 'done') return acc;
@@ -83,6 +87,7 @@ export function buildTaskStalledBuckets(tasks: Task[]): TaskStalledBuckets {
       if ((task.status === 'todo' || task.status === 'doing') && isOverdue(task.due_date)) {
         acc.overdueTodo.push(task);
       }
+      if (hasBrokenNextCandidate(task, taskMap)) acc.brokenNextCandidate.push(task);
       return acc;
     },
     {
@@ -90,6 +95,7 @@ export function buildTaskStalledBuckets(tasks: Task[]): TaskStalledBuckets {
       waitingNoDate: [],
       doingStale: [],
       overdueTodo: [],
+      brokenNextCandidate: [],
     },
   );
 }
@@ -216,7 +222,7 @@ export function buildTaskFocusDeck(tasks: Task[], limit = 3): FocusTaskItem[] {
     .slice(0, limit);
 }
 
-export function buildProjectStalledBuckets(projects: Project[]): ProjectStalledBuckets {
+export function buildProjectStalledBuckets(projects: Project[], tasks: Task[] = [], taskMap: Record<string, Task> = {}): ProjectStalledBuckets {
   return projects.reduce<ProjectStalledBuckets>(
     (acc, project) => {
       if (project.overdueCount > 0) acc.overdue.push(project);
@@ -224,6 +230,9 @@ export function buildProjectStalledBuckets(projects: Project[]): ProjectStalledB
       if (!project.startedAt) acc.noStartedAt.push(project);
       if (project.nextActionCount === 0) acc.noActions.push(project);
       if (project.status === 'waiting') acc.waiting.push(project);
+      const relationIssue = buildProjectRelationshipIssue(project, tasks, taskMap);
+      if (relationIssue?.reason === '候補リンク切れ') acc.brokenNextCandidate.push(project);
+      if (relationIssue?.reason === 'この後候補なし') acc.noNextCandidate.push(project);
       return acc;
     },
     {
@@ -232,31 +241,36 @@ export function buildProjectStalledBuckets(projects: Project[]): ProjectStalledB
       noStartedAt: [],
       noActions: [],
       waiting: [],
+      brokenNextCandidate: [],
+      noNextCandidate: [],
     },
   );
 }
 
-function buildStalledTaskEntry(task: Task): StalledTaskItem | null {
+function buildStalledTaskEntry(task: Task, taskMap: Record<string, Task> = {}): StalledTaskItem | null {
   if (isWaitingResponseOverdue(task)) {
     return { task, reason: '回答予定日超過', detail: `回答予定 ${formatRelativeDueText(task.waiting_response_date)}`, tone: 'danger', score: 0 };
   }
   if (isWaitingWithoutResponseDate(task)) {
     return { task, reason: '待ち日付未設定', detail: '回答予定日をまだ入れていません', tone: 'warning', score: 1 };
   }
+  if (hasBrokenNextCandidate(task, taskMap)) {
+    return { task, reason: '候補リンク切れ', detail: '「この後に見る候補」が削除済み、または不正です', tone: 'warning', score: 2 };
+  }
   if (isDoingStale(task)) {
     const days = daysFromTimestamp(task.updated_at) ?? 0;
-    return { task, reason: '進行停滞', detail: `${days}日更新なし`, tone: 'warning', score: 2 };
+    return { task, reason: '進行停滞', detail: `${days}日更新なし`, tone: 'warning', score: 3 };
   }
   if ((task.status === 'todo' || task.status === 'doing') && isOverdue(task.due_date)) {
-    return { task, reason: '期限超過', detail: `期限 ${formatRelativeDueText(task.due_date)}`, tone: 'danger', score: 3 };
+    return { task, reason: '期限超過', detail: `期限 ${formatRelativeDueText(task.due_date)}`, tone: 'danger', score: 4 };
   }
   return null;
 }
 
-export function buildStalledTaskList(tasks: Task[], limit = 4): StalledTaskItem[] {
+export function buildStalledTaskList(tasks: Task[], limit = 4, taskMap: Record<string, Task> = {}): StalledTaskItem[] {
   return tasks
     .filter((task) => task.status !== 'done' && task.gtd_category !== 'project')
-    .map((task) => buildStalledTaskEntry(task))
+    .map((task) => buildStalledTaskEntry(task, taskMap))
     .filter((item): item is StalledTaskItem => Boolean(item))
     .sort((left, right) => {
       if (left.score !== right.score) return left.score - right.score;
@@ -265,15 +279,22 @@ export function buildStalledTaskList(tasks: Task[], limit = 4): StalledTaskItem[
     .slice(0, limit);
 }
 
-function buildStalledProjectEntry(project: Project): StalledProjectItem | null {
+function buildStalledProjectEntry(project: Project, tasks: Task[] = [], taskMap: Record<string, Task> = {}): StalledProjectItem | null {
   if (project.overdueCount > 0) {
     return { project, reason: '期限超過あり', detail: `${project.overdueCount}件の期限超過`, tone: 'danger', score: 0 };
   }
-  if (project.nextActionCount === 0) {
-    return { project, reason: '次アクション未設定', detail: 'project はあるが一手が未定義', tone: 'warning', score: 1 };
+  const relationIssue = buildProjectRelationshipIssue(project, tasks, taskMap);
+  if (relationIssue) {
+    return {
+      project,
+      reason: relationIssue.reason,
+      detail: relationIssue.detail,
+      tone: relationIssue.tone,
+      score: relationIssue.score,
+    };
   }
   if (!project.startedAt) {
-    return { project, reason: '開始日未記録', detail: 'started_at が未記録です', tone: 'warning', score: 2 };
+    return { project, reason: '開始日未記録', detail: 'started_at が未記録です', tone: 'warning', score: 5 };
   }
   if (!project.dueDate) {
     return { project, reason: '期限未設定', detail: 'ガントや期限判断から漏れやすい状態です', tone: 'info', score: 3 };
@@ -284,9 +305,9 @@ function buildStalledProjectEntry(project: Project): StalledProjectItem | null {
   return null;
 }
 
-export function buildStalledProjectList(projects: Project[], limit = 4): StalledProjectItem[] {
+export function buildStalledProjectList(projects: Project[], limit = 4, tasks: Task[] = [], taskMap: Record<string, Task> = {}): StalledProjectItem[] {
   return projects
-    .map((project) => buildStalledProjectEntry(project))
+    .map((project) => buildStalledProjectEntry(project, tasks, taskMap))
     .filter((item): item is StalledProjectItem => Boolean(item))
     .sort((left, right) => {
       if (left.score !== right.score) return left.score - right.score;

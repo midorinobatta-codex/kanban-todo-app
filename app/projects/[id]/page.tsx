@@ -48,6 +48,13 @@ import { compareTasksByDuePriority } from '@/lib/tasks/task-ordering';
 import { buildHistoryRows, buildTaskExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildStalledTaskList, buildTaskFocusDeck, buildTaskStalledBuckets, isDoingStale } from '@/lib/tasks/focus';
+import {
+  buildProjectRelationshipIssue,
+  getNextCandidateTask,
+  getProjectGoalSnippet,
+  getTaskMap,
+  hasBrokenNextCandidate,
+} from '@/lib/tasks/relationships';
 
 const levelClassName = {
   low: 'bg-emerald-100 text-emerald-700',
@@ -167,6 +174,10 @@ export default function ProjectDetailPage() {
     () => [...linkedTasks].sort(compareTasksByDuePriority),
     [linkedTasks],
   );
+  const detailTaskMap = useMemo(
+    () => getTaskMap(project ? [project, ...linkedTasks] : linkedTasks),
+    [linkedTasks, project],
+  );
 
   const groupedLinkedTasks = useMemo(() => {
     return TASK_PROGRESS_ORDER.reduce(
@@ -224,6 +235,32 @@ export default function ProjectDetailPage() {
       items.push({ id: 'no-actions', label: '次アクション未設定', tone: 'info' });
     }
 
+    const relationIssue = buildProjectRelationshipIssue(
+      {
+        id: project.id,
+        title: project.title,
+        description: project.description,
+        createdAt: project.created_at,
+        startedAt: project.started_at,
+        dueDate: project.due_date,
+        status: project.status,
+        nextActionCount: linkedTasks.length,
+        doneCount: linkedTasks.filter((task) => task.status === 'done').length,
+        overdueCount: linkedTasks.filter((task) => task.status !== 'done' && isOverdue(task.due_date)).length,
+        completionRate: linkedTasks.length === 0 ? 0 : Math.round((linkedTasks.filter((task) => task.status === 'done').length / linkedTasks.length) * 100),
+      },
+      linkedTasks,
+      detailTaskMap,
+    );
+    if (relationIssue) {
+      items.push({
+        id: `relation-${relationIssue.reason}`,
+        label: relationIssue.reason,
+        description: relationIssue.detail,
+        tone: relationIssue.tone,
+      });
+    }
+
     if (waitingOverdueCount > 0) {
       items.push({ id: 'waiting-overdue', label: '回答予定日超過', count: `${waitingOverdueCount}件`, tone: 'danger' });
     }
@@ -242,12 +279,12 @@ export default function ProjectDetailPage() {
     }
 
     return items;
-  }, [dueSoonCount, linkedTasks.length, project, waitingNoDateCount, waitingOverdueCount]);
+  }, [detailTaskMap, dueSoonCount, linkedTasks, project, waitingNoDateCount, waitingOverdueCount]);
 
   const focusedLinkedTasks = useMemo(() => buildTaskFocusDeck(sortedLinkedTasks, 3), [sortedLinkedTasks]);
 
-  const stalledLinkedTaskBuckets = useMemo(() => buildTaskStalledBuckets(sortedLinkedTasks), [sortedLinkedTasks]);
-  const stalledLinkedTasks = useMemo(() => buildStalledTaskList(sortedLinkedTasks, 4), [sortedLinkedTasks]);
+  const stalledLinkedTaskBuckets = useMemo(() => buildTaskStalledBuckets(sortedLinkedTasks, detailTaskMap), [detailTaskMap, sortedLinkedTasks]);
+  const stalledLinkedTasks = useMemo(() => buildStalledTaskList(sortedLinkedTasks, 4, detailTaskMap), [detailTaskMap, sortedLinkedTasks]);
 
   const toggleTaskSectionExpanded = useCallback((key: string) => {
     setExpandedTaskSectionKeys((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -607,6 +644,12 @@ export default function ProjectDetailPage() {
     setError(null);
 
     const nextProjectTaskId = values.gtdCategory === 'next_action' ? values.projectTaskId || null : null;
+    const nextCandidateTaskId =
+      values.nextCandidateTaskId &&
+      values.nextCandidateTaskId !== editingLinkedTask.id &&
+      detailTaskMap[values.nextCandidateTaskId]
+        ? values.nextCandidateTaskId
+        : null;
 
     const { data, error: updateError } = await getSupabaseClient()
       .from('tasks')
@@ -622,6 +665,7 @@ export default function ProjectDetailPage() {
           values.status === 'waiting' ? values.waitingResponseDate || null : null,
         gtd_category: values.gtdCategory,
         project_task_id: nextProjectTaskId,
+        next_candidate_task_id: nextCandidateTaskId,
       })
       .eq('id', editingLinkedTask.id)
       .select('*')
@@ -1340,6 +1384,10 @@ export default function ProjectDetailPage() {
                   ) : (
                     <div className="mt-2 grid gap-2 xl:grid-cols-[minmax(0,1.35fr)_minmax(18rem,1fr)]">
                       <FeaturedLinkedTaskCard
+                        task={focusedLinkedTasks[0].task}
+                        projectGoal={getProjectGoalSnippet(project?.description)}
+                        nextCandidate={getNextCandidateTask(focusedLinkedTasks[0].task, detailTaskMap)}
+                        brokenNextCandidate={hasBrokenNextCandidate(focusedLinkedTasks[0].task, detailTaskMap)}
                         title={focusedLinkedTasks[0].task.title}
                         reason={focusedLinkedTasks[0].reason}
                         detail={focusedLinkedTasks[0].detail}
@@ -1352,6 +1400,10 @@ export default function ProjectDetailPage() {
                         {focusedLinkedTasks.slice(1).map((item) => (
                           <LinkedTaskMiniCard
                             key={item.task.id}
+                            task={item.task}
+                            projectGoal={getProjectGoalSnippet(project?.description)}
+                            nextCandidate={getNextCandidateTask(item.task, detailTaskMap)}
+                            brokenNextCandidate={hasBrokenNextCandidate(item.task, detailTaskMap)}
                             title={item.task.title}
                             reason={item.reason}
                             detail={item.detail}
@@ -1377,6 +1429,7 @@ export default function ProjectDetailPage() {
                   <div className="mt-2 flex flex-wrap gap-2">
                     <RiskChip label="回答超過" count={stalledLinkedTaskBuckets.waitingOverdue.length} danger />
                     <RiskChip label="待ち日付未設定" count={stalledLinkedTaskBuckets.waitingNoDate.length} />
+                    <RiskChip label="候補リンク切れ" count={stalledLinkedTaskBuckets.brokenNextCandidate.length} />
                     <RiskChip label="進行停滞" count={stalledLinkedTaskBuckets.doingStale.length} />
                     <RiskChip label="期限超過" count={stalledLinkedTaskBuckets.overdueTodo.length} />
                   </div>
@@ -1387,6 +1440,10 @@ export default function ProjectDetailPage() {
                       stalledLinkedTasks.map((item) => (
                         <LinkedTaskMiniCard
                           key={item.task.id}
+                          task={item.task}
+                          projectGoal={getProjectGoalSnippet(project?.description)}
+                          nextCandidate={getNextCandidateTask(item.task, detailTaskMap)}
+                          brokenNextCandidate={hasBrokenNextCandidate(item.task, detailTaskMap)}
                           title={item.task.title}
                           reason={item.reason}
                           detail={item.detail}
@@ -1582,6 +1639,9 @@ export default function ProjectDetailPage() {
                           <LinkedTaskCard
                             key={task.id}
                             task={task}
+                            projectGoal={getProjectGoalSnippet(project?.description)}
+                            nextCandidate={getNextCandidateTask(task, detailTaskMap)}
+                            brokenNextCandidate={hasBrokenNextCandidate(task, detailTaskMap)}
                             disabled={updatingTaskId === task.id}
                             dragging={draggedTaskId === task.id}
                             draggable={!selectionMode && updatingTaskId !== task.id}
@@ -1613,6 +1673,7 @@ export default function ProjectDetailPage() {
         open={editingLinkedTask !== null}
         task={editingLinkedTask}
         projectTasks={project ? [project] : []}
+        candidateTasks={project ? [project, ...linkedTasks] : linkedTasks}
         saving={updatingTaskId === editingLinkedTask?.id}
         onClose={() => {
           if (updatingTaskId) return;
@@ -1634,6 +1695,10 @@ export default function ProjectDetailPage() {
 }
 
 function FeaturedLinkedTaskCard({
+  task,
+  projectGoal,
+  nextCandidate,
+  brokenNextCandidate,
   title,
   reason,
   detail,
@@ -1642,6 +1707,10 @@ function FeaturedLinkedTaskCard({
   onDone,
   onWaiting,
 }: {
+  task: Task;
+  projectGoal: string | null;
+  nextCandidate: Task | null;
+  brokenNextCandidate: boolean;
   title: string;
   reason: string;
   detail: string;
@@ -1665,6 +1734,14 @@ function FeaturedLinkedTaskCard({
       </div>
       <h4 className="mt-3 text-xl font-semibold text-slate-900">{title}</h4>
       <p className="mt-2 text-sm leading-6 text-slate-600">{detail}</p>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px]">
+        {projectGoal ? <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">目的メモ: {projectGoal}</span> : null}
+        {task.next_candidate_task_id ? (
+          <span className={`rounded-full px-2.5 py-1 ${brokenNextCandidate ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>
+            この後に見る候補: {nextCandidate?.title ?? 'リンク切れ'}
+          </span>
+        ) : null}
+      </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" onClick={onDone} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800">完了</button>
         <button type="button" onClick={onWaiting} className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 transition hover:bg-blue-100">待ち＋日付</button>
@@ -1675,6 +1752,10 @@ function FeaturedLinkedTaskCard({
 }
 
 function LinkedTaskMiniCard({
+  task,
+  projectGoal,
+  nextCandidate,
+  brokenNextCandidate,
   title,
   reason,
   detail,
@@ -1683,6 +1764,10 @@ function LinkedTaskMiniCard({
   onDone,
   onWaiting,
 }: {
+  task: Task;
+  projectGoal: string | null;
+  nextCandidate: Task | null;
+  brokenNextCandidate: boolean;
   title: string;
   reason: string;
   detail: string;
@@ -1708,6 +1793,12 @@ function LinkedTaskMiniCard({
           </div>
           <div className="mt-2 text-sm font-semibold text-slate-900">{title}</div>
           <div className="mt-1 text-xs text-slate-600">{detail}</div>
+          {projectGoal ? <div className="mt-1 text-[11px] text-slate-500">目的メモ: {projectGoal}</div> : null}
+          {task.next_candidate_task_id ? (
+            <div className={`mt-1 text-[11px] ${brokenNextCandidate ? 'text-amber-700' : 'text-blue-700'}`}>
+              この後に見る候補: {nextCandidate?.title ?? 'リンク切れ'}
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onOpen} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">開く</button>
@@ -1721,6 +1812,9 @@ function LinkedTaskMiniCard({
 
 function LinkedTaskCard({
   task,
+  projectGoal,
+  nextCandidate,
+  brokenNextCandidate,
   disabled,
   dragging,
   draggable,
@@ -1732,6 +1826,9 @@ function LinkedTaskCard({
   onEdit,
 }: {
   task: Task;
+  projectGoal: string | null;
+  nextCandidate: Task | null;
+  brokenNextCandidate: boolean;
   disabled: boolean;
   dragging: boolean;
   draggable: boolean;
@@ -1875,7 +1972,16 @@ function LinkedTaskCard({
             }
           />
         ) : null}
+
+        {task.next_candidate_task_id ? (
+          <Tag
+            label={`この後に見る候補: ${nextCandidate?.title ?? 'リンク切れ'}`}
+            className={brokenNextCandidate ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-700'}
+          />
+        ) : null}
       </div>
+
+      {projectGoal ? <p className="mt-3 text-[11px] text-slate-500">目的メモ: {projectGoal}</p> : null}
     </article>
   );
 }

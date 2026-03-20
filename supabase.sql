@@ -12,6 +12,7 @@ create table if not exists public.tasks (
   status text not null default 'todo',
   gtd_category text not null default 'next_action',
   project_task_id uuid,
+  next_candidate_task_id uuid,
   due_date date,
   waiting_response_date date,
   started_at timestamptz,
@@ -29,6 +30,7 @@ alter table public.tasks add column if not exists importance text not null defau
 alter table public.tasks add column if not exists urgency text not null default 'medium';
 alter table public.tasks add column if not exists started_at timestamptz;
 alter table public.tasks add column if not exists project_task_id uuid;
+alter table public.tasks add column if not exists next_candidate_task_id uuid;
 alter table public.tasks add column if not exists waiting_response_date date;
 alter table public.tasks add column if not exists tracked_minutes integer not null default 0;
 alter table public.tasks add column if not exists manual_adjustment_minutes integer not null default 0;
@@ -45,12 +47,18 @@ alter table public.tasks
 add constraint tasks_project_task_id_fkey
 foreign key (project_task_id) references public.tasks(id) on delete set null;
 
+alter table public.tasks drop constraint if exists tasks_next_candidate_task_id_fkey;
+alter table public.tasks
+add constraint tasks_next_candidate_task_id_fkey
+foreign key (next_candidate_task_id) references public.tasks(id) on delete set null;
+
 create index if not exists tasks_user_id_idx on public.tasks(user_id);
 create index if not exists tasks_status_created_at_idx on public.tasks(status, created_at desc);
 create index if not exists tasks_user_gtd_category_idx on public.tasks(user_id, gtd_category);
 create index if not exists tasks_user_importance_idx on public.tasks(user_id, importance);
 create index if not exists tasks_user_urgency_idx on public.tasks(user_id, urgency);
 create index if not exists tasks_project_task_id_idx on public.tasks(project_task_id);
+create index if not exists tasks_next_candidate_task_id_idx on public.tasks(next_candidate_task_id);
 create index if not exists tasks_user_session_started_at_idx on public.tasks(user_id, session_started_at);
 
 create or replace function public.set_updated_at()

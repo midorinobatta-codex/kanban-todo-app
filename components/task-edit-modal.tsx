@@ -28,12 +28,14 @@ export type TaskEditValues = {
   waitingResponseDate: string;
   gtdCategory: TaskGtdCategory;
   projectTaskId: string;
+  nextCandidateTaskId: string;
 };
 
 type TaskEditModalProps = {
   open: boolean;
   task: Task | null;
   projectTasks: Task[];
+  candidateTasks: Task[];
   saving?: boolean;
   onClose: () => void;
   onSave: (values: TaskEditValues) => Promise<void>;
@@ -52,6 +54,7 @@ function buildInitialValues(task: Task): TaskEditValues {
     waitingResponseDate: task.waiting_response_date ?? '',
     gtdCategory: task.gtd_category,
     projectTaskId: task.project_task_id ?? '',
+    nextCandidateTaskId: task.next_candidate_task_id ?? '',
   };
 }
 
@@ -59,6 +62,7 @@ export function TaskEditModal({
   open,
   task,
   projectTasks,
+  candidateTasks,
   saving = false,
   onClose,
   onSave,
@@ -91,6 +95,7 @@ export function TaskEditModal({
   if (!open || !task || !values) return null;
 
   const selectableProjects = projectTasks.filter((projectTask) => projectTask.id !== task.id);
+  const selectableCandidates = candidateTasks.filter((candidateTask) => candidateTask.id !== task.id);
   const showWaitingResponseDate = values.status === 'waiting';
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -104,6 +109,7 @@ export function TaskEditModal({
       assignee: values.assignee,
       waitingResponseDate: values.status === 'waiting' ? values.waitingResponseDate : '',
       projectTaskId: values.gtdCategory === 'next_action' ? values.projectTaskId : '',
+      nextCandidateTaskId: values.nextCandidateTaskId,
     });
   };
 
@@ -277,6 +283,27 @@ export function TaskEditModal({
               ))}
             </select>
           )}
+
+          <div className="md:col-span-2">
+            <label className="mb-1 block text-sm font-medium text-slate-700">この後に見る候補</label>
+            <select
+              value={values.nextCandidateTaskId}
+              onChange={(e) =>
+                setValues((prev) => (prev ? { ...prev, nextCandidateTaskId: e.target.value } : prev))
+              }
+              className="w-full rounded border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">未設定</option>
+              {selectableCandidates.map((candidateTask) => (
+                <option key={candidateTask.id} value={candidateTask.id}>
+                  {candidateTask.gtd_category === 'project' ? 'Project' : 'Task'}: {candidateTask.title}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-500">
+              終わった後や迷った時に次に見る 1 件だけを軽く残します。
+            </p>
+          </div>
 
           <div className="flex justify-between gap-2 pt-2 md:col-span-2">
             <div>

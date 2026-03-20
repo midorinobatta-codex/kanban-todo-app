@@ -71,6 +71,7 @@ export type Task = {
   status: TaskProgress;
   gtd_category: TaskGtdCategory;
   project_task_id: string | null;
+  next_candidate_task_id: string | null;
   due_date: string | null;
   waiting_response_date: string | null;
   started_at: string | null;
