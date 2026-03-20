@@ -75,6 +75,7 @@ import {
 } from '@/lib/tasks/time-tracking';
 import { parseQuickCaptureInput } from '@/lib/tasks/quick-capture';
 import {
+  PROJECT_NO_NEXT_ACTION_DETAIL,
   getNextCandidateTask,
   getProjectGoalSnippet,
   hasBrokenNextCandidate,
@@ -1439,8 +1440,9 @@ export function KanbanBoard({
         id: 'project-no-action',
         label: '次アクション未設定PJ',
         count: `${projectWithoutActionCount}件`,
-        tone: 'neutral',
-        href: '/projects',
+        tone: 'warning',
+        description: PROJECT_NO_NEXT_ACTION_DETAIL,
+        href: '/projects#no-action-projects',
       });
     }
 
@@ -5346,10 +5348,14 @@ function TaskCard({
         handlePointerCancel();
         onDragEnd?.();
       }}
-      className={`rounded-xl border bg-white p-4 shadow-sm transition focus:outline-none focus:ring-2 focus:ring-slate-300 ${
+      className={`relative overflow-hidden rounded-xl border bg-white p-4 shadow-sm transition focus:outline-none focus:ring-2 focus:ring-slate-300 ${
         selected ? 'border-slate-900 ring-1 ring-slate-200' : 'border-slate-200'
       } ${draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'} ${dragging ? 'opacity-50' : ''}`}
     >
+      {mode === 'kanban' && task.gtd_category === 'next_action' && task.project_task_id ? (
+        <div className="pointer-events-none absolute inset-y-3 left-0 w-1 rounded-r-full bg-blue-100" aria-hidden="true" />
+      ) : null}
+
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 flex-1 items-start gap-3">
           {selectionMode && selectable ? (
@@ -5462,7 +5468,7 @@ function TaskCard({
           </span>
         ) : null}
 
-        {task.next_candidate_task_id ? (
+        {task.next_candidate_task_id && mode !== 'kanban' ? (
           <span className={`rounded-md px-2 py-1 ${hasBrokenCandidate ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>
             この後に見る候補: {nextCandidateTask?.title ?? 'リンク切れ'}
           </span>

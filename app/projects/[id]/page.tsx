@@ -49,6 +49,8 @@ import { buildHistoryRows, buildTaskExportRows, downloadCsv, downloadJson } from
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildStalledTaskList, buildTaskFocusDeck, buildTaskStalledBuckets, isDoingStale } from '@/lib/tasks/focus';
 import {
+  PROJECT_NO_NEXT_ACTION_DETAIL,
+  PROJECT_NO_NEXT_ACTION_REASON,
   buildProjectRelationshipIssue,
   getNextCandidateTask,
   getProjectGoalSnippet,
@@ -232,7 +234,7 @@ export default function ProjectDetailPage() {
     }
 
     if (linkedTasks.length === 0) {
-      items.push({ id: 'no-actions', label: '次アクション未設定', tone: 'info' });
+      items.push({ id: 'no-actions', label: PROJECT_NO_NEXT_ACTION_REASON, description: PROJECT_NO_NEXT_ACTION_DETAIL, tone: 'warning' });
     }
 
     const relationIssue = buildProjectRelationshipIssue(
@@ -1074,6 +1076,24 @@ export default function ProjectDetailPage() {
       ) : null}
 
       <AlertStrip items={projectAlertItems} title="通知 / 警告" compact defaultCollapsed />
+
+      {linkedTasks.length === 0 && project.status !== 'done' ? (
+        <section className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-amber-900">{PROJECT_NO_NEXT_ACTION_REASON}</h2>
+              <p className="mt-1 text-sm text-amber-800">{PROJECT_NO_NEXT_ACTION_DETAIL}</p>
+              <p className="mt-1 text-xs text-amber-700">保存はそのまま通ります。まずは 1 件だけ次に進めるタスクを足せば、止まり状態を解消できます。</p>
+            </div>
+            <a
+              href="#next-action-form-panel"
+              className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+            >
+              下のクイック追加を見る
+            </a>
+          </div>
+        </section>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[340px_minmax(0,1fr)]">
         <aside className="space-y-6 xl:sticky xl:top-32 xl:self-start">

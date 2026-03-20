@@ -1,5 +1,5 @@
 import type { Project } from '@/lib/domain/project';
-import { buildProjectRelationshipIssue, hasBrokenNextCandidate } from '@/lib/tasks/relationships';
+import { PROJECT_NO_NEXT_ACTION_DETAIL, buildProjectRelationshipIssue, hasBrokenNextCandidate } from '@/lib/tasks/relationships';
 import type { Task } from '@/lib/types';
 import {
   formatRelativeDueText,
@@ -352,8 +352,8 @@ function buildProjectFocusEntry(project: Project): FocusProjectItem {
     return {
       project,
       reason: '次アクション未設定',
-      detail: 'project はあるが一手が未定義',
-      tone: 'info',
+      detail: PROJECT_NO_NEXT_ACTION_DETAIL,
+      tone: 'warning',
       score: 3,
     };
   }

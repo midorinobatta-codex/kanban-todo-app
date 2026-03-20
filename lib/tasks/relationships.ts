@@ -2,6 +2,8 @@ import type { Project } from '@/lib/domain/project';
 import type { Task } from '@/lib/types';
 
 const GOAL_MAX_LENGTH = 72;
+export const PROJECT_NO_NEXT_ACTION_REASON = '次アクション未設定';
+export const PROJECT_NO_NEXT_ACTION_DETAIL = '次に進める一手がまだなく、止まり候補として確認したい状態です';
 
 function collapseWhitespace(value: string) {
   return value.replace(/\s+/g, ' ').trim();
@@ -88,8 +90,8 @@ export function buildProjectRelationshipIssue(
   if (project.nextActionCount === 0) {
     return {
       projectId: project.id,
-      reason: '次アクション未設定',
-      detail: 'project はあるが一手が未定義です',
+      reason: PROJECT_NO_NEXT_ACTION_REASON,
+      detail: PROJECT_NO_NEXT_ACTION_DETAIL,
       tone: 'warning',
       score: 2,
     };
