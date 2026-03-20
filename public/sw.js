@@ -1,4 +1,4 @@
-const VERSION = 'flowfocus-v2';
+const VERSION = 'flowfocus-v3';
 const STATIC_CACHE = `${VERSION}-static`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
 const APP_SHELL = [
@@ -51,20 +51,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   if (event.request.mode === 'navigate' || requestUrl.pathname.startsWith('/_next/')) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response.ok) {
-            const copy = response.clone();
-            void caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy)).catch(() => undefined);
-          }
-          return response;
-        })
-        .catch(async () => {
-          const cached = await caches.match(event.request);
-          return cached ?? Response.error();
-        })
-    );
+    event.respondWith(fetch(event.request));
     return;
   }
 

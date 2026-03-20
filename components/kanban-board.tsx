@@ -5327,6 +5327,8 @@ function TaskCard({
             <Link
               href={`/projects/${task.id}`}
               data-no-card-click="true"
+              onClick={(event) => event.stopPropagation()}
+              onPointerDown={(event) => event.stopPropagation()}
               className="text-lg font-semibold text-slate-900 hover:underline"
             >
               {task.title}
