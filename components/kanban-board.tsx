@@ -3475,100 +3475,109 @@ export function KanbanBoard({
               読み込み中...
             </div>
           ) : viewMode === 'kanban' ? (
-            <section className="grid gap-4 xl:grid-cols-4">
-              {TASK_PROGRESS_ORDER.map((status) => (
-                <TaskGroupCard
-                  key={status}
-                  title={TASK_PROGRESS_LABELS[status]}
-                  subtitle={
-                    status === 'done'
-                      ? showCompletedInKanban
-                        ? `${groupedTasks[status].length}件 / 直近から表示`
-                        : `${groupedTasks[status].length}件 / 既定では非表示`
-                      : `${groupedTasks[status].length}件 / ドラッグでも移動できます`
-                  }
-                  headerAction={
-                    status === 'done' ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowCompletedInKanban((prev) => !prev)}
-                        className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${
-                          showCompletedInKanban
-                            ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
-                            : 'border-slate-900 bg-slate-900 text-white hover:bg-slate-800'
-                        }`}
-                      >
-                        {showCompletedInKanban ? '完了を隠す' : '完了を表示'}
-                      </button>
-                    ) : null
-                  }
-                  dropTargetStatus={status}
-                  dragActive={dragOverStatus === status}
-                  onDragOver={(event) => handleColumnDragOver(event, status)}
-                  onDragLeave={() => setDragOverStatus((prev) => (prev === status ? null : prev))}
-                  onDrop={(event) => void handleColumnDrop(event, status)}
-                >
-                  {status === 'done' && !showCompletedInKanban ? (
-                    <EmptyState label="完了タスクは非表示です。必要なときだけ表示できます。" />
-                  ) : groupedTasks[status].length === 0 ? (
-                    <EmptyState label="ここにドラッグして移動できます" />
-                  ) : (
-                    <div className="space-y-3">
-                      {(
-                        status === 'done'
-                          ? getLimitedItems(
-                              `kanban-${status}`,
-                              groupedTasks[status],
-                              KANBAN_COMPLETED_INITIAL_VISIBLE_COUNT,
-                            )
-                          : getLimitedItems(`kanban-${status}`, groupedTasks[status])
-                      ).map((task) => (
-                        <TaskCard
-                          key={task.id}
-                          task={task}
-                          disabled={updatingTaskId === task.id}
-                          onUpdateStatus={updateStatus}
-                          onDelete={deleteTask}
-                          onEdit={setEditingTask}
-                          onDragStart={handleTaskDragStart}
-                          onDragEnd={handleTaskDragEnd}
-                          dragging={draggedTaskId === task.id}
-                          draggable={!selectionMode && updatingTaskId !== task.id}
-                          selectionMode={selectionMode}
-                          selectable
-                          selected={selectedTaskIds.includes(task.id)}
-                          onToggleSelect={toggleTaskSelection}
-                          projectTaskMap={projectTaskMap}
-                          projectNextActionCountMap={projectNextActionCountMap}
-                          onStartSession={startTaskSession}
-                          onStopSession={stopTaskSession}
-                          onOpenAdjustment={setAdjustingTask}
-                          activeSessionTaskId={activeSessionTask?.id ?? null}
-                          timeDisplayNow={clockNow}
-                          mode="kanban"
-                        />
-                      ))}
+            <section
+              className={
+                showCompletedInKanban
+                  ? 'grid gap-4 xl:grid-cols-4'
+                  : 'grid gap-4 xl:[grid-template-columns:repeat(3,minmax(0,1fr))_minmax(5.5rem,0.24fr)]'
+              }
+            >
+              {TASK_PROGRESS_ORDER.map((status) => {
+                const isCollapsedDoneColumn = status === 'done' && !showCompletedInKanban;
+                const visibleTasks =
+                  status === 'done'
+                    ? getLimitedItems(
+                        `kanban-${status}`,
+                        groupedTasks[status],
+                        KANBAN_COMPLETED_INITIAL_VISIBLE_COUNT,
+                      )
+                    : getLimitedItems(`kanban-${status}`, groupedTasks[status]);
 
-                      <SectionExpandButton
-                        hiddenCount={
-                          groupedTasks[status].length -
-                          (
-                            status === 'done'
-                              ? getLimitedItems(
-                                  `kanban-${status}`,
-                                  groupedTasks[status],
-                                  KANBAN_COMPLETED_INITIAL_VISIBLE_COUNT,
-                                )
-                              : getLimitedItems(`kanban-${status}`, groupedTasks[status])
-                          ).length
-                        }
-                        expanded={Boolean(expandedSectionKeys[`kanban-${status}`])}
-                        onToggle={() => toggleSectionExpanded(`kanban-${status}`)}
-                      />
-                    </div>
-                  )}
-                </TaskGroupCard>
-              ))}
+                return (
+                  <TaskGroupCard
+                    key={status}
+                    title={TASK_PROGRESS_LABELS[status]}
+                    subtitle={
+                      status === 'done'
+                        ? showCompletedInKanban
+                          ? `${groupedTasks[status].length}件 / 直近から表示`
+                          : `${groupedTasks[status].length}件 / 非表示中`
+                        : `${groupedTasks[status].length}件 / ドラッグでも移動できます`
+                    }
+                    headerAction={
+                      status === 'done' ? (
+                        <button
+                          type="button"
+                          onClick={() => setShowCompletedInKanban((prev) => !prev)}
+                          aria-label={showCompletedInKanban ? '完了列を隠す' : '完了列を表示する'}
+                          className={`rounded-lg border px-3 py-2 text-xs font-medium transition ${
+                            showCompletedInKanban
+                              ? 'border-slate-300 bg-white text-slate-700 hover:bg-slate-50'
+                              : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-white'
+                          }`}
+                        >
+                          {showCompletedInKanban ? '完了を隠す' : '表示'}
+                        </button>
+                      ) : null
+                    }
+                    dropTargetStatus={status}
+                    dragActive={dragOverStatus === status}
+                    onDragOver={(event) => handleColumnDragOver(event, status)}
+                    onDragLeave={() => setDragOverStatus((prev) => (prev === status ? null : prev))}
+                    onDrop={(event) => void handleColumnDrop(event, status)}
+                    className={isCollapsedDoneColumn ? 'flex min-h-[24rem] flex-col px-2.5 py-4' : undefined}
+                    headerClassName={isCollapsedDoneColumn ? 'mb-0 flex-col items-stretch gap-4' : undefined}
+                    titleClassName={isCollapsedDoneColumn ? 'text-base tracking-wide [writing-mode:vertical-rl]' : undefined}
+                    subtitleClassName={isCollapsedDoneColumn ? 'sr-only' : undefined}
+                    contentClassName={isCollapsedDoneColumn ? 'mt-4 flex flex-1 flex-col justify-center' : 'space-y-3'}
+                  >
+                    {status === 'done' && !showCompletedInKanban ? (
+                      <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50/80 px-2 py-4 text-center text-xs text-slate-500">
+                        <span className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-2 py-1 font-medium text-slate-600 [writing-mode:vertical-rl]">
+                          {groupedTasks[status].length}件
+                        </span>
+                      </div>
+                    ) : groupedTasks[status].length === 0 ? (
+                      <EmptyState label="ここにドラッグして移動できます" />
+                    ) : (
+                      <div className="space-y-3">
+                        {visibleTasks.map((task) => (
+                          <TaskCard
+                            key={task.id}
+                            task={task}
+                            disabled={updatingTaskId === task.id}
+                            onUpdateStatus={updateStatus}
+                            onDelete={deleteTask}
+                            onEdit={setEditingTask}
+                            onDragStart={handleTaskDragStart}
+                            onDragEnd={handleTaskDragEnd}
+                            dragging={draggedTaskId === task.id}
+                            draggable={!selectionMode && updatingTaskId !== task.id}
+                            selectionMode={selectionMode}
+                            selectable
+                            selected={selectedTaskIds.includes(task.id)}
+                            onToggleSelect={toggleTaskSelection}
+                            projectTaskMap={projectTaskMap}
+                            projectNextActionCountMap={projectNextActionCountMap}
+                            onStartSession={startTaskSession}
+                            onStopSession={stopTaskSession}
+                            onOpenAdjustment={setAdjustingTask}
+                            activeSessionTaskId={activeSessionTask?.id ?? null}
+                            timeDisplayNow={clockNow}
+                            mode="kanban"
+                          />
+                        ))}
+
+                        <SectionExpandButton
+                          hiddenCount={groupedTasks[status].length - visibleTasks.length}
+                          expanded={Boolean(expandedSectionKeys[`kanban-${status}`])}
+                          onToggle={() => toggleSectionExpanded(`kanban-${status}`)}
+                        />
+                      </div>
+                    )}
+                  </TaskGroupCard>
+                );
+              })}
             </section>
           ) : viewMode === 'matrix' ? (
             <section className="grid gap-4 md:grid-cols-2">
@@ -4233,6 +4242,11 @@ function TaskGroupCard({
   onDragOver,
   onDragLeave,
   onDrop,
+  className,
+  headerClassName,
+  titleClassName,
+  subtitleClassName,
+  contentClassName,
 }: {
   title: string;
   subtitle: string;
@@ -4243,24 +4257,29 @@ function TaskGroupCard({
   onDragOver?: (event: DragEvent<HTMLDivElement>) => void;
   onDragLeave?: () => void;
   onDrop?: (event: DragEvent<HTMLDivElement>) => void;
+  className?: string;
+  headerClassName?: string;
+  titleClassName?: string;
+  subtitleClassName?: string;
+  contentClassName?: string;
 }) {
   return (
     <article
       className={`rounded-2xl border bg-white p-4 shadow-sm transition ${
         dragActive ? 'border-sky-400 ring-2 ring-sky-200' : 'border-slate-200'
-      }`}
+      } ${className ?? ''}`}
       onDragOver={dropTargetStatus ? onDragOver : undefined}
       onDragLeave={dropTargetStatus ? onDragLeave : undefined}
       onDrop={dropTargetStatus ? onDrop : undefined}
     >
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+      <div className={`mb-4 flex flex-wrap items-start justify-between gap-3 ${headerClassName ?? ''}`}>
         <div>
-          <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
-          <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
+          <h2 className={`text-xl font-semibold text-slate-900 ${titleClassName ?? ''}`}>{title}</h2>
+          <p className={`mt-1 text-sm text-slate-500 ${subtitleClassName ?? ''}`}>{subtitle}</p>
         </div>
         {headerAction ? <div>{headerAction}</div> : null}
       </div>
-      <div className="space-y-3">{children}</div>
+      <div className={contentClassName ?? 'space-y-3'}>{children}</div>
     </article>
   );
 }
