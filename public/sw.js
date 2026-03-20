@@ -1,7 +1,24 @@
-const VERSION = 'flowfocus-v1';
+const VERSION = 'flowfocus-v2';
 const STATIC_CACHE = `${VERSION}-static`;
 const RUNTIME_CACHE = `${VERSION}-runtime`;
-const APP_SHELL = ['/', '/login', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const APP_SHELL = [
+  '/manifest.webmanifest',
+  '/icons/icon-192.png',
+  '/icons/icon-512.png',
+  '/icons/apple-touch-icon.png',
+];
+
+const isCacheableStaticAsset = (url) => {
+  if (url.origin !== self.location.origin) {
+    return false;
+  }
+
+  if (url.pathname === '/manifest.webmanifest') {
+    return true;
+  }
+
+  return url.pathname.startsWith('/icons/');
+};
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(APP_SHELL)).catch(() => undefined));
@@ -17,6 +34,12 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 self.addEventListener('fetch', (event) => {
   if (event.request.method !== 'GET') {
     return;
@@ -27,33 +50,41 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (event.request.mode === 'navigate') {
+  if (event.request.mode === 'navigate' || requestUrl.pathname.startsWith('/_next/')) {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          const copy = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy)).catch(() => undefined);
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy)).catch(() => undefined);
+          }
           return response;
         })
         .catch(async () => {
           const cached = await caches.match(event.request);
-          return cached || caches.match('/');
+          return cached ?? Response.error();
         })
     );
     return;
   }
 
+  if (!isCacheableStaticAsset(requestUrl)) {
+    return;
+  }
+
   event.respondWith(
     caches.match(event.request).then((cached) => {
-      if (cached) {
-        return cached;
-      }
+      const networkFetch = fetch(event.request)
+        .then((response) => {
+          if (response.ok) {
+            const copy = response.clone();
+            void caches.open(STATIC_CACHE).then((cache) => cache.put(event.request, copy)).catch(() => undefined);
+          }
+          return response;
+        })
+        .catch(() => cached);
 
-      return fetch(event.request).then((response) => {
-        const copy = response.clone();
-        caches.open(RUNTIME_CACHE).then((cache) => cache.put(event.request, copy)).catch(() => undefined);
-        return response;
-      });
+      return cached ?? networkFetch;
     })
   );
 });
