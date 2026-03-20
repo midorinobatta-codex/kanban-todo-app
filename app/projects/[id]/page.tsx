@@ -58,7 +58,7 @@ const levelClassName = {
 const defaultNewActionState = {
   title: '',
   description: '',
-  assignee: '',
+  assignee: '自分',
   importance: 'medium' as TaskImportance,
   urgency: 'medium' as TaskUrgency,
   dueDate: '',
