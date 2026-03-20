@@ -74,6 +74,11 @@ import {
   type DailyReviewSummary,
 } from '@/lib/tasks/time-tracking';
 import { parseQuickCaptureInput } from '@/lib/tasks/quick-capture';
+import {
+  getNextCandidateTask,
+  getProjectGoalSnippet,
+  hasBrokenNextCandidate,
+} from '@/lib/tasks/relationships';
 import { compareTasksByDuePriority } from '@/lib/tasks/task-ordering';
 import { getTaskTemplatePeriodKey, shouldGenerateTaskTemplateForDate } from '@/lib/tasks/task-templates';
 
@@ -868,6 +873,16 @@ export function KanbanBoard({
     );
   }, [projectTasks]);
 
+  const taskMap = useMemo(() => {
+    return tasks.reduce(
+      (acc, task) => {
+        acc[task.id] = task;
+        return acc;
+      },
+      {} as Record<string, Task>,
+    );
+  }, [tasks]);
+
   const projectNextActionCountMap = useMemo(() => {
     return tasks.reduce(
       (acc, task) => {
@@ -1387,11 +1402,11 @@ export function KanbanBoard({
 
   const todayFocusTasks = useMemo(() => buildTaskFocusDeck(visibleTasksForNormalViews, 3), [visibleTasksForNormalViews]);
 
-  const stalledTaskBuckets = useMemo(() => buildTaskStalledBuckets(visibleTasksForNormalViews), [visibleTasksForNormalViews]);
-  const stalledTasks = useMemo(() => buildStalledTaskList(visibleTasksForNormalViews, 4), [visibleTasksForNormalViews]);
-  const reviewTaskQueue = useMemo(() => buildStalledTaskList(visibleTasksForNormalViews, 12), [visibleTasksForNormalViews]);
-  const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(projects), [projects]);
-  const reviewProjects = useMemo(() => buildStalledProjectList(projects, 8), [projects]);
+  const stalledTaskBuckets = useMemo(() => buildTaskStalledBuckets(visibleTasksForNormalViews, taskMap), [taskMap, visibleTasksForNormalViews]);
+  const stalledTasks = useMemo(() => buildStalledTaskList(visibleTasksForNormalViews, 4, taskMap), [taskMap, visibleTasksForNormalViews]);
+  const reviewTaskQueue = useMemo(() => buildStalledTaskList(visibleTasksForNormalViews, 12, taskMap), [taskMap, visibleTasksForNormalViews]);
+  const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(projects, tasks, taskMap), [projects, taskMap, tasks]);
+  const reviewProjects = useMemo(() => buildStalledProjectList(projects, 8, tasks, taskMap), [projects, taskMap, tasks]);
 
   const boardAlertItems = useMemo(() => {
     const items: AlertStripItem[] = [];
@@ -1429,13 +1444,32 @@ export function KanbanBoard({
       });
     }
 
+    if (stalledProjectBuckets.brokenNextCandidate.length > 0) {
+      items.push({
+        id: 'project-broken-next',
+        label: '候補リンク切れPJ',
+        count: `${stalledProjectBuckets.brokenNextCandidate.length}件`,
+        tone: 'warning',
+      });
+    }
+
+    if (stalledTaskBuckets.brokenNextCandidate.length > 0) {
+      items.push({
+        id: 'task-broken-next',
+        label: '候補リンク切れTask',
+        count: `${stalledTaskBuckets.brokenNextCandidate.length}件`,
+        tone: 'warning',
+      });
+    }
+
     return items;
-  }, [projects]);
+  }, [projects, stalledProjectBuckets.brokenNextCandidate.length, stalledTaskBuckets.brokenNextCandidate.length]);
 
   const stalledTaskQuickSelections = useMemo(
     () => [
       { key: 'stalledWaiting', label: '回答超過', taskIds: stalledTaskBuckets.waitingOverdue.map((task) => task.id) },
       { key: 'stalledNoDate', label: '待ち日付未設定', taskIds: stalledTaskBuckets.waitingNoDate.map((task) => task.id) },
+      { key: 'stalledBrokenNext', label: '候補リンク切れ', taskIds: stalledTaskBuckets.brokenNextCandidate.map((task) => task.id) },
       { key: 'stalledDoing', label: '進行停滞', taskIds: stalledTaskBuckets.doingStale.map((task) => task.id) },
       { key: 'stalledDue', label: '期限超過', taskIds: stalledTaskBuckets.overdueTodo.map((task) => task.id) },
     ].map((item) => ({ ...item, taskIds: Array.from(new Set(item.taskIds)) })),
@@ -1446,6 +1480,7 @@ export function KanbanBoard({
     const stalledTaskIds = new Set([
       ...stalledTaskBuckets.waitingOverdue.map((task) => task.id),
       ...stalledTaskBuckets.waitingNoDate.map((task) => task.id),
+      ...stalledTaskBuckets.brokenNextCandidate.map((task) => task.id),
       ...stalledTaskBuckets.doingStale.map((task) => task.id),
       ...stalledTaskBuckets.overdueTodo.map((task) => task.id),
     ]);
@@ -1475,9 +1510,10 @@ export function KanbanBoard({
       { key: 'reviewAll', label: '対象すべて', count: reviewTargetTaskIds.length, taskIds: reviewTargetTaskIds },
       { key: 'reviewWaiting', label: '回答超過', count: stalledTaskBuckets.waitingOverdue.length, taskIds: stalledTaskBuckets.waitingOverdue.map((task) => task.id) },
       { key: 'reviewNoDate', label: '待ち日付未設定', count: stalledTaskBuckets.waitingNoDate.length, taskIds: stalledTaskBuckets.waitingNoDate.map((task) => task.id) },
+      { key: 'reviewBrokenNext', label: '候補リンク切れ', count: stalledTaskBuckets.brokenNextCandidate.length, taskIds: stalledTaskBuckets.brokenNextCandidate.map((task) => task.id) },
       { key: 'reviewDoing', label: '進行停滞', count: stalledTaskBuckets.doingStale.length, taskIds: stalledTaskBuckets.doingStale.map((task) => task.id) },
     ],
-    [reviewTargetTaskIds, stalledTaskBuckets.doingStale, stalledTaskBuckets.waitingNoDate, stalledTaskBuckets.waitingOverdue],
+    [reviewTargetTaskIds, stalledTaskBuckets.brokenNextCandidate, stalledTaskBuckets.doingStale, stalledTaskBuckets.waitingNoDate, stalledTaskBuckets.waitingOverdue],
   );
 
   const toggleSectionExpanded = useCallback((key: string) => {
@@ -2129,6 +2165,12 @@ export function KanbanBoard({
 
     const nextProjectTaskId =
       values.gtdCategory === 'next_action' ? values.projectTaskId || null : null;
+    const nextCandidateTaskId =
+      values.nextCandidateTaskId &&
+      values.nextCandidateTaskId !== editingTask.id &&
+      taskMap[values.nextCandidateTaskId]
+        ? values.nextCandidateTaskId
+        : null;
 
     const { data, error: updateError } = await getSupabaseClient()
       .from('tasks')
@@ -2144,6 +2186,7 @@ export function KanbanBoard({
           values.status === 'waiting' ? values.waitingResponseDate || null : null,
         gtd_category: values.gtdCategory,
         project_task_id: nextProjectTaskId,
+        next_candidate_task_id: nextCandidateTaskId,
       })
       .eq('id', editingTask.id)
       .select('*')
@@ -3565,6 +3608,7 @@ export function KanbanBoard({
                             selected={selectedTaskIds.includes(task.id)}
                             onToggleSelect={toggleTaskSelection}
                             projectTaskMap={projectTaskMap}
+                            taskMap={taskMap}
                             projectNextActionCountMap={projectNextActionCountMap}
                             onStartSession={startTaskSession}
                             onStopSession={stopTaskSession}
@@ -3610,6 +3654,7 @@ export function KanbanBoard({
                         selected={selectedTaskIds.includes(task.id)}
                         onToggleSelect={toggleTaskSelection}
                         projectTaskMap={projectTaskMap}
+                        taskMap={taskMap}
                         projectNextActionCountMap={projectNextActionCountMap}
                         onStartSession={startTaskSession}
                         onStopSession={stopTaskSession}
@@ -3660,6 +3705,7 @@ export function KanbanBoard({
                         onDragStart={handleTaskDragStart}
                         onDragEnd={handleTaskDragEnd}
                         projectTaskMap={projectTaskMap}
+                        taskMap={taskMap}
                         projectNextActionCountMap={projectNextActionCountMap}
                         selectionMode={selectionMode}
                         selectedTaskIds={selectedTaskIds}
@@ -3689,6 +3735,7 @@ export function KanbanBoard({
                           selected={selectedTaskIds.includes(task.id)}
                           onToggleSelect={toggleTaskSelection}
                           projectTaskMap={projectTaskMap}
+                          taskMap={taskMap}
                           projectNextActionCountMap={projectNextActionCountMap}
                           onStartSession={startTaskSession}
                           onStopSession={stopTaskSession}
@@ -3737,6 +3784,7 @@ export function KanbanBoard({
                         selected={selectedTaskIds.includes(task.id)}
                         onToggleSelect={toggleTaskSelection}
                         projectTaskMap={projectTaskMap}
+                        taskMap={taskMap}
                         projectNextActionCountMap={projectNextActionCountMap}
                         onStartSession={startTaskSession}
                         onStopSession={stopTaskSession}
@@ -3773,6 +3821,7 @@ export function KanbanBoard({
         open={editingTask !== null}
         task={editingTask}
         projectTasks={projectTasks}
+        candidateTasks={tasks}
         saving={updatingTaskId === editingTask?.id}
         onClose={() => {
           if (updatingTaskId) return;
@@ -4315,6 +4364,7 @@ function ProjectTaskAccordionCard({
   onDragStart,
   onDragEnd,
   projectTaskMap,
+  taskMap,
   projectNextActionCountMap,
   selectionMode,
   selectedTaskIds,
@@ -4342,6 +4392,7 @@ function ProjectTaskAccordionCard({
   onDragStart: (taskId: string) => void;
   onDragEnd: () => void;
   projectTaskMap: Record<string, Task>;
+  taskMap: Record<string, Task>;
   projectNextActionCountMap: Record<string, number>;
   selectionMode: boolean;
   selectedTaskIds: string[];
@@ -4362,6 +4413,7 @@ function ProjectTaskAccordionCard({
         disabled={disabled}
         onEdit={onEdit}
         projectTaskMap={projectTaskMap}
+        taskMap={taskMap}
         projectNextActionCountMap={projectNextActionCountMap}
         onStartSession={onStartSession}
         onStopSession={onStopSession}
@@ -4413,6 +4465,7 @@ function ProjectTaskAccordionCard({
                   selected={selectedTaskIds.includes(childTask.id)}
                   onToggleSelect={onToggleSelect}
                   projectTaskMap={projectTaskMap}
+                  taskMap={taskMap}
                   projectNextActionCountMap={projectNextActionCountMap}
                   onStartSession={onStartSession}
                   onStopSession={onStopSession}
@@ -5169,6 +5222,7 @@ type TaskCardProps = {
   selected?: boolean;
   onToggleSelect?: (taskId: string) => void;
   projectTaskMap: Record<string, Task>;
+  taskMap: Record<string, Task>;
   projectNextActionCountMap: Record<string, number>;
   onStartSession?: (task: Task) => Promise<void>;
   onStopSession?: (task: Task) => Promise<void>;
@@ -5192,6 +5246,7 @@ function TaskCard({
   selected = false,
   onToggleSelect,
   projectTaskMap,
+  taskMap,
   projectNextActionCountMap,
   onStartSession,
   onStopSession,
@@ -5200,9 +5255,13 @@ function TaskCard({
   timeDisplayNow = Date.now(),
   mode,
 }: TaskCardProps) {
-  const linkedProjectTitle = task.project_task_id ? projectTaskMap[task.project_task_id]?.title : null;
+  const linkedProject = task.project_task_id ? projectTaskMap[task.project_task_id] : null;
+  const linkedProjectTitle = linkedProject?.title ?? null;
+  const linkedProjectGoal = getProjectGoalSnippet(linkedProject?.description);
   const linkedNextActionCount =
     task.gtd_category === 'project' ? projectNextActionCountMap[task.id] ?? 0 : 0;
+  const nextCandidateTask = getNextCandidateTask(task, taskMap);
+  const hasBrokenCandidate = hasBrokenNextCandidate(task, taskMap);
 
   const gtdLabel =
     task.gtd_category === 'next_action' && task.project_task_id
@@ -5395,18 +5454,26 @@ function TaskCard({
           </span>
         ) : null}
 
-        {showProjectTag ? (
-          <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
-            Project: {linkedProjectTitle}
-          </span>
-        ) : null}
+        {showProjectTag ? <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">Project: {linkedProjectTitle}</span> : null}
 
         {showAssignee ? (
           <span className="rounded-md bg-slate-100 px-2 py-1 text-slate-700">
             担当: {task.assignee}
           </span>
         ) : null}
+
+        {task.next_candidate_task_id ? (
+          <span className={`rounded-md px-2 py-1 ${hasBrokenCandidate ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>
+            この後に見る候補: {nextCandidateTask?.title ?? 'リンク切れ'}
+          </span>
+        ) : null}
       </div>
+
+      {(linkedProjectGoal || (task.next_candidate_task_id && mode !== 'kanban')) ? (
+        <div className="mt-3 space-y-1 text-xs text-slate-500">
+          {linkedProjectGoal ? <p>目的メモ: {linkedProjectGoal}</p> : null}
+        </div>
+      ) : null}
 
       {!selectionMode ? (
         <div className="mt-3 flex flex-wrap gap-2" data-no-card-click="true">
