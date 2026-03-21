@@ -87,16 +87,19 @@ export async function listProjects(): Promise<Project[]> {
 
       if (!acc[task.project_task_id]) {
         acc[task.project_task_id] = {
+          linkedTaskCount: 0,
           nextActionCount: 0,
           doneCount: 0,
           overdueCount: 0,
         };
       }
 
-      acc[task.project_task_id].nextActionCount += 1;
+      acc[task.project_task_id].linkedTaskCount += 1;
 
       if (task.status === 'done') {
         acc[task.project_task_id].doneCount += 1;
+      } else {
+        acc[task.project_task_id].nextActionCount += 1;
       }
 
       if (isOverdue(task.due_date) && task.status !== 'done') {
@@ -109,6 +112,7 @@ export async function listProjects(): Promise<Project[]> {
       string,
       {
         nextActionCount: number;
+        linkedTaskCount: number;
         doneCount: number;
         overdueCount: number;
       }
@@ -117,18 +121,20 @@ export async function listProjects(): Promise<Project[]> {
 
   return projects.map((project) => {
     const stats = statsMap[project.id] ?? {
+      linkedTaskCount: 0,
       nextActionCount: 0,
       doneCount: 0,
       overdueCount: 0,
     };
 
     const completionRate =
-      stats.nextActionCount === 0
+      stats.linkedTaskCount === 0
         ? 0
-        : Math.round((stats.doneCount / stats.nextActionCount) * 100);
+        : Math.round((stats.doneCount / stats.linkedTaskCount) * 100);
 
     return {
       ...project,
+      linkedTaskCount: stats.linkedTaskCount,
       nextActionCount: stats.nextActionCount,
       doneCount: stats.doneCount,
       overdueCount: stats.overdueCount,

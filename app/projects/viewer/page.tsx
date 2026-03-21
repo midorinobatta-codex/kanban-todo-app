@@ -15,6 +15,7 @@ import {
   formatRelativeDueText,
   parseDateOnly,
 } from '@/lib/tasks/presentation';
+import { PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL, PROJECT_NO_NEXT_ACTION_DETAIL } from '@/lib/tasks/relationships';
 import { buildHistoryRows, buildProjectExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildProjectFocusDeck, buildProjectStalledBuckets, buildStalledProjectList } from '@/lib/tasks/focus';
@@ -40,9 +41,15 @@ function projectMatchesFilter(project: Project, filterKey: ViewerFilterKey) {
 
   switch (filterKey) {
     case 'risk':
-      return project.overdueCount > 0 || !project.startedAt || !project.dueDate || project.nextActionCount === 0;
+      return (
+        project.overdueCount > 0 ||
+        !project.startedAt ||
+        !project.dueDate ||
+        project.linkedTaskCount === 0 ||
+        (project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done')
+      );
     case 'active':
-      return project.status === 'doing' || (project.nextActionCount > 0 && project.completionRate < 100);
+      return project.status === 'doing' || (project.linkedTaskCount > 0 && project.completionRate < 100);
     case 'waiting':
       return project.status === 'waiting';
     case 'due_soon':
@@ -100,7 +107,10 @@ function getBarStyle(project: Project, timelineDays: Date[]) {
 function buildViewerAlerts(projects: Project[]) {
   const missingStart = projects.filter((project) => !project.startedAt).length;
   const missingDue = projects.filter((project) => !project.dueDate).length;
-  const noActions = projects.filter((project) => project.nextActionCount === 0).length;
+  const noActions = projects.filter((project) => project.linkedTaskCount === 0).length;
+  const noActiveActions = projects.filter(
+    (project) => project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done',
+  ).length;
   const overdueProjects = projects.filter((project) => project.overdueCount > 0).length;
 
   const items: AlertStripItem[] = [];
@@ -115,7 +125,10 @@ function buildViewerAlerts(projects: Project[]) {
     items.push({ id: 'missing-due', label: '期限未設定', count: `${missingDue}件`, tone: 'warning', href: '#missing-due-projects' });
   }
   if (noActions > 0) {
-    items.push({ id: 'no-actions', label: '次アクション未設定', count: `${noActions}件`, tone: 'info' });
+    items.push({ id: 'no-actions', label: '次アクション未設定', count: `${noActions}件`, tone: 'info', description: PROJECT_NO_NEXT_ACTION_DETAIL });
+  }
+  if (noActiveActions > 0) {
+    items.push({ id: 'no-active-actions', label: '進める一手なし', count: `${noActiveActions}件`, tone: 'info', description: PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL });
   }
 
   return items;
@@ -331,6 +344,7 @@ export default function ProjectsViewerPage() {
               <RiskChip label="開始日未記録" count={stalledProjectBuckets.noStartedAt.length} />
               <RiskChip label="期限未設定" count={stalledProjectBuckets.noDueDate.length} />
               <RiskChip label="次アクション未設定" count={stalledProjectBuckets.noActions.length} />
+              <RiskChip label="進める一手なし" count={stalledProjectBuckets.noActiveActions.length} />
             </div>
             <div className="mt-2 space-y-2">
               {stalledProjects.length === 0 ? (
@@ -637,5 +651,4 @@ function ProjectMiniLink({ item }: { item: { project: Project; reason: string; d
     </Link>
   );
 }
-
 

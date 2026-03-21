@@ -75,6 +75,7 @@ import {
 } from '@/lib/tasks/time-tracking';
 import { parseQuickCaptureInput } from '@/lib/tasks/quick-capture';
 import {
+  PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
   PROJECT_NO_NEXT_ACTION_DETAIL,
   getNextCandidateTask,
   getProjectGoalSnippet,
@@ -1413,7 +1414,10 @@ export function KanbanBoard({
     const items: AlertStripItem[] = [];
     const missingStartProjectCount = projects.filter((project) => !project.startedAt).length;
     const missingDueProjectCount = projects.filter((project) => !project.dueDate).length;
-    const projectWithoutActionCount = projects.filter((project) => project.nextActionCount === 0).length;
+    const projectWithoutActionCount = projects.filter((project) => project.linkedTaskCount === 0).length;
+    const projectWithoutActiveActionCount = projects.filter(
+      (project) => project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done',
+    ).length;
 
     if (missingStartProjectCount > 0) {
       items.push({
@@ -1443,6 +1447,17 @@ export function KanbanBoard({
         tone: 'warning',
         description: PROJECT_NO_NEXT_ACTION_DETAIL,
         href: '/projects#no-action-projects',
+      });
+    }
+
+    if (projectWithoutActiveActionCount > 0) {
+      items.push({
+        id: 'project-no-active-action',
+        label: '進める一手なしPJ',
+        count: `${projectWithoutActiveActionCount}件`,
+        tone: 'info',
+        description: PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+        href: '/projects#no-active-action-projects',
       });
     }
 
@@ -1492,10 +1507,11 @@ export function KanbanBoard({
       waitingOverdueCount: stalledTaskBuckets.waitingOverdue.length,
       waitingNoDateCount: stalledTaskBuckets.waitingNoDate.length,
       projectNoActionCount: stalledProjectBuckets.noActions.length,
+      projectNoActiveActionCount: stalledProjectBuckets.noActiveActions.length,
       wipCount: groupedTasks.doing.length,
       overdueTaskCount: stalledTaskBuckets.overdueTodo.length,
     };
-  }, [groupedTasks.doing.length, stalledProjectBuckets.noActions.length, stalledTaskBuckets]);
+  }, [groupedTasks.doing.length, stalledProjectBuckets.noActions.length, stalledProjectBuckets.noActiveActions.length, stalledTaskBuckets]);
 
   const reviewTaskProjectCount = useMemo(
     () => reviewTaskQueue.filter((item) => Boolean(item.task.project_task_id)).length,
@@ -3998,7 +4014,7 @@ function TodayReviewSupportPanel({
 }: {
   mode: TodayScreenMode;
   todaySummary: { urgentActionCount: number; doingCount: number; waitingOverdueCount: number; waitingNoDateCount: number; projectCount: number; totalCount: number };
-  reviewSummary: { stalledCount: number; waitingOverdueCount: number; waitingNoDateCount: number; projectNoActionCount: number; wipCount: number; overdueTaskCount: number };
+  reviewSummary: { stalledCount: number; waitingOverdueCount: number; waitingNoDateCount: number; projectNoActionCount: number; projectNoActiveActionCount: number; wipCount: number; overdueTaskCount: number };
   reviewTaskCount: number;
   reviewProjectCount: number;
   reviewTaskProjectCount: number;
@@ -4015,6 +4031,7 @@ function TodayReviewSupportPanel({
         { label: 'Waiting期限超過', value: `${reviewSummary.waitingOverdueCount}件`, danger: reviewSummary.waitingOverdueCount > 0 },
         { label: '待ち日付未設定', value: `${reviewSummary.waitingNoDateCount}件`, danger: reviewSummary.waitingNoDateCount > 0 },
         { label: '次アクション未設定PJ', value: `${reviewSummary.projectNoActionCount}件`, danger: reviewSummary.projectNoActionCount > 0 },
+        { label: '進める一手なしPJ', value: `${reviewSummary.projectNoActiveActionCount}件`, danger: reviewSummary.projectNoActiveActionCount > 0 },
       ]
     : [
         { label: '今すぐ対応', value: `${todaySummary.urgentActionCount}件`, danger: todaySummary.urgentActionCount > 0 },

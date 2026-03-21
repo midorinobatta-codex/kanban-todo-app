@@ -1,5 +1,10 @@
 import type { Project } from '@/lib/domain/project';
-import { PROJECT_NO_NEXT_ACTION_DETAIL, buildProjectRelationshipIssue, hasBrokenNextCandidate } from '@/lib/tasks/relationships';
+import {
+  PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+  PROJECT_NO_NEXT_ACTION_DETAIL,
+  buildProjectRelationshipIssue,
+  hasBrokenNextCandidate,
+} from '@/lib/tasks/relationships';
 import type { Task } from '@/lib/types';
 import {
   formatRelativeDueText,
@@ -40,6 +45,7 @@ export type ProjectStalledBuckets = {
   noDueDate: Project[];
   noStartedAt: Project[];
   noActions: Project[];
+  noActiveActions: Project[];
   waiting: Project[];
   brokenNextCandidate: Project[];
   noNextCandidate: Project[];
@@ -228,7 +234,10 @@ export function buildProjectStalledBuckets(projects: Project[], tasks: Task[] = 
       if (project.overdueCount > 0) acc.overdue.push(project);
       if (!project.dueDate) acc.noDueDate.push(project);
       if (!project.startedAt) acc.noStartedAt.push(project);
-      if (project.nextActionCount === 0) acc.noActions.push(project);
+      if (project.linkedTaskCount === 0) acc.noActions.push(project);
+      if (project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done') {
+        acc.noActiveActions.push(project);
+      }
       if (project.status === 'waiting') acc.waiting.push(project);
       const relationIssue = buildProjectRelationshipIssue(project, tasks, taskMap);
       if (relationIssue?.reason === '候補リンク切れ') acc.brokenNextCandidate.push(project);
@@ -240,6 +249,7 @@ export function buildProjectStalledBuckets(projects: Project[], tasks: Task[] = 
       noDueDate: [],
       noStartedAt: [],
       noActions: [],
+      noActiveActions: [],
       waiting: [],
       brokenNextCandidate: [],
       noNextCandidate: [],
@@ -348,7 +358,7 @@ function buildProjectFocusEntry(project: Project): FocusProjectItem {
     };
   }
 
-  if (project.nextActionCount === 0) {
+  if (project.linkedTaskCount === 0) {
     return {
       project,
       reason: '次アクション未設定',
@@ -358,22 +368,32 @@ function buildProjectFocusEntry(project: Project): FocusProjectItem {
     };
   }
 
+  if (project.nextActionCount === 0 && project.status !== 'done') {
+    return {
+      project,
+      reason: '進める一手なし',
+      detail: PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+      tone: 'info',
+      score: 4,
+    };
+  }
+
   if (project.status === 'waiting') {
     return {
       project,
       reason: '待ち案件',
       detail: '止まりやすいので確認',
       tone: 'warning',
-      score: 4,
+      score: 5,
     };
   }
 
   return {
     project,
     reason: '進行中',
-    detail: `${project.nextActionCount}件の次アクション`,
+    detail: `${project.nextActionCount}件の進める一手`,
     tone: 'info',
-    score: 5,
+    score: 6,
   };
 }
 

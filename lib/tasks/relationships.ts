@@ -4,6 +4,8 @@ import type { Task } from '@/lib/types';
 const GOAL_MAX_LENGTH = 72;
 export const PROJECT_NO_NEXT_ACTION_REASON = '次アクション未設定';
 export const PROJECT_NO_NEXT_ACTION_DETAIL = '次に進める一手がまだなく、止まり候補として確認したい状態です';
+export const PROJECT_NO_ACTIVE_NEXT_ACTION_REASON = '進める一手なし';
+export const PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL = '関連タスクはあるが、未完了の次アクションがなく次に進める一手がありません';
 
 function collapseWhitespace(value: string) {
   return value.replace(/\s+/g, ' ').trim();
@@ -87,7 +89,7 @@ export function buildProjectRelationshipIssue(
     };
   }
 
-  if (project.nextActionCount === 0) {
+  if (project.linkedTaskCount === 0) {
     return {
       projectId: project.id,
       reason: PROJECT_NO_NEXT_ACTION_REASON,
@@ -97,11 +99,11 @@ export function buildProjectRelationshipIssue(
     };
   }
 
-  if (activeLinkedTasks.length === 0 && project.status !== 'done') {
+  if (project.nextActionCount === 0 && project.status !== 'done') {
     return {
       projectId: project.id,
-      reason: '進行中の一手なし',
-      detail: '完了済みのみで、次に進める関連タスクがありません',
+      reason: PROJECT_NO_ACTIVE_NEXT_ACTION_REASON,
+      detail: PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
       tone: 'info',
       score: 3,
     };

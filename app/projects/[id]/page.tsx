@@ -49,6 +49,8 @@ import { buildHistoryRows, buildTaskExportRows, downloadCsv, downloadJson } from
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildStalledTaskList, buildTaskFocusDeck, buildTaskStalledBuckets, isDoingStale } from '@/lib/tasks/focus';
 import {
+  PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+  PROJECT_NO_ACTIVE_NEXT_ACTION_REASON,
   PROJECT_NO_NEXT_ACTION_DETAIL,
   PROJECT_NO_NEXT_ACTION_REASON,
   buildProjectRelationshipIssue,
@@ -246,7 +248,8 @@ export default function ProjectDetailPage() {
         startedAt: project.started_at,
         dueDate: project.due_date,
         status: project.status,
-        nextActionCount: linkedTasks.length,
+        linkedTaskCount: linkedTasks.length,
+        nextActionCount: linkedTasks.filter((task) => task.status !== 'done').length,
         doneCount: linkedTasks.filter((task) => task.status === 'done').length,
         overdueCount: linkedTasks.filter((task) => task.status !== 'done' && isOverdue(task.due_date)).length,
         completionRate: linkedTasks.length === 0 ? 0 : Math.round((linkedTasks.filter((task) => task.status === 'done').length / linkedTasks.length) * 100),
@@ -1031,7 +1034,7 @@ export default function ProjectDetailPage() {
               <h1 className="text-2xl font-semibold text-slate-900">{formatProjectDisplayName(project.title)}</h1>
               <span className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-700">Actions of Projects</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">完了率 {completionRate}%</span>
-              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">次アクション {linkedTasks.length}件</span>
+              <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">進める一手 {linkedTasks.filter((task) => task.status !== 'done').length}件 / 関連タスク {linkedTasks.length}件</span>
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-medium text-slate-600">期限 {formatDate(project.due_date)}</span>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1088,6 +1091,22 @@ export default function ProjectDetailPage() {
             <a
               href="#next-action-form-panel"
               className="rounded-lg border border-amber-300 bg-white px-3 py-2 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+            >
+              下のクイック追加を見る
+            </a>
+          </div>
+        </section>
+      ) : linkedTasks.length > 0 && linkedTasks.every((task) => task.status === 'done') && project.status !== 'done' ? (
+        <section className="rounded-2xl border border-sky-300 bg-sky-50 px-4 py-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-sm font-semibold text-sky-900">{PROJECT_NO_ACTIVE_NEXT_ACTION_REASON}</h2>
+              <p className="mt-1 text-sm text-sky-800">{PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL}</p>
+              <p className="mt-1 text-xs text-sky-700">完了済みタスクだけでは project は前に進まないため、新しい次アクションを 1 件追加すると一覧や Review と判定が揃います。</p>
+            </div>
+            <a
+              href="#next-action-form-panel"
+              className="rounded-lg border border-sky-300 bg-white px-3 py-2 text-xs font-medium text-sky-800 transition hover:bg-sky-100"
             >
               下のクイック追加を見る
             </a>

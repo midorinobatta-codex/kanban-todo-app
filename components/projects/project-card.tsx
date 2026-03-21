@@ -71,16 +71,16 @@ export function ProjectCard({ project, onDelete }: ProjectCardProps) {
 
       <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
         <div className="rounded-lg bg-slate-50 px-3 py-2">
-          <p className="text-slate-500">次アクション</p>
+          <p className="text-slate-500">進める一手</p>
           <p className="mt-1 font-semibold text-slate-900">
             {project.nextActionCount}件
           </p>
         </div>
 
         <div className="rounded-lg bg-emerald-50 px-3 py-2">
-          <p className="text-emerald-700">完了</p>
+          <p className="text-emerald-700">関連タスク / 完了</p>
           <p className="mt-1 font-semibold text-emerald-800">
-            {project.doneCount}件
+            {project.linkedTaskCount}件 / {project.doneCount}件
           </p>
         </div>
 
