@@ -53,7 +53,7 @@ function projectMatchesFilter(project: Project, filterKey: ViewerFilterKey, rela
         !project.dueDate ||
         project.linkedTaskCount === 0 ||
         (project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done') ||
-        relationIssue?.reason === 'この後候補未設定 task あり' ||
+        relationIssue?.reason === '次候補なし task あり' ||
         relationIssue?.reason === '候補リンク切れ'
       );
     case 'active':
@@ -146,10 +146,10 @@ function buildViewerAlerts(
   if (projectsWithoutNextCandidates.length > 0) {
     items.push({
       id: 'no-next-candidate',
-      label: 'この後候補未設定 taskあり',
+      label: '次候補なし taskあり',
       count: `${projectsWithoutNextCandidates.length}project / ${projectsWithoutNextCandidateTaskCount}task`,
       tone: 'info',
-      description: 'project 内に「この後に見る候補」未設定の active task があります。',
+      description: 'project 内に「次候補」未設定の active task があります。',
     });
   }
   if (projectsWithBrokenNextCandidates.length > 0) {
@@ -158,7 +158,7 @@ function buildViewerAlerts(
       label: '候補リンク切れ',
       count: `${projectsWithBrokenNextCandidates.length}件`,
       tone: 'warning',
-      description: '「この後に見る候補」が削除済み、または不正です。',
+      description: '「次候補」が削除済み、または不正です。',
     });
   }
 
@@ -219,7 +219,7 @@ export default function ProjectsViewerPage() {
     [filteredProjects],
   );
 
-  const projectsWithoutNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === 'この後候補未設定 task あり'), [filteredProjects, projectRelationshipIssues]);
+  const projectsWithoutNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === '次候補なし task あり'), [filteredProjects, projectRelationshipIssues]);
   const projectsWithBrokenNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === '候補リンク切れ'), [filteredProjects, projectRelationshipIssues]);
   const projectsWithoutNextCandidateTaskCount = useMemo(() => projectsWithoutNextCandidates.reduce((sum, project) => sum + (projectRelationshipIssues[project.id]?.missingNextCandidateTaskIds.length ?? 0), 0), [projectRelationshipIssues, projectsWithoutNextCandidates]);
 
@@ -389,7 +389,7 @@ export default function ProjectsViewerPage() {
               <RiskChip label="期限未設定" count={stalledProjectBuckets.noDueDate.length} />
               <RiskChip label="次アクション未設定" count={stalledProjectBuckets.noActions.length} />
               <RiskChip label="進める一手なし" count={stalledProjectBuckets.noActiveActions.length} />
-              <RiskChip label="この後候補未設定" count={stalledProjectBuckets.noNextCandidate.length} />
+              <RiskChip label="次候補なし" count={stalledProjectBuckets.noNextCandidate.length} />
               <RiskChip label="候補リンク切れ" count={stalledProjectBuckets.brokenNextCandidate.length} />
             </div>
             <div className="mt-2 space-y-2">

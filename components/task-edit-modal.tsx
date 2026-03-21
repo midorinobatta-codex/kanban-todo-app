@@ -285,7 +285,7 @@ export function TaskEditModal({
           )}
 
           <div className="md:col-span-2">
-            <label className="mb-1 block text-sm font-medium text-slate-700">この後に見る候補</label>
+            <label className="mb-1 block text-sm font-medium text-slate-700">次候補</label>
             <select
               value={values.nextCandidateTaskId}
               onChange={(e) =>

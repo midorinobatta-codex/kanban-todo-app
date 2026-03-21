@@ -241,7 +241,7 @@ export function buildProjectStalledBuckets(projects: Project[], tasks: Task[] = 
       if (project.status === 'waiting') acc.waiting.push(project);
       const relationIssue = buildProjectRelationshipIssue(project, tasks, taskMap);
       if (relationIssue?.reason === '候補リンク切れ') acc.brokenNextCandidate.push(project);
-      if (relationIssue?.reason === 'この後候補未設定 task あり') acc.noNextCandidate.push(project);
+      if (relationIssue?.reason === '次候補なし task あり') acc.noNextCandidate.push(project);
       return acc;
     },
     {
@@ -265,7 +265,7 @@ function buildStalledTaskEntry(task: Task, taskMap: Record<string, Task> = {}): 
     return { task, reason: '待ち日付未設定', detail: '回答予定日をまだ入れていません', tone: 'warning', score: 1 };
   }
   if (hasBrokenNextCandidate(task, taskMap)) {
-    return { task, reason: '候補リンク切れ', detail: '「この後に見る候補」が削除済み、または不正です', tone: 'warning', score: 2 };
+    return { task, reason: '候補リンク切れ', detail: '「次候補」が削除済み、または不正です', tone: 'warning', score: 2 };
   }
   if (isDoingStale(task)) {
     const days = daysFromTimestamp(task.updated_at) ?? 0;
