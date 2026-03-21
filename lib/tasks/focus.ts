@@ -1,7 +1,9 @@
 import type { Project } from '@/lib/domain/project';
 import {
   PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+  PROJECT_NO_ACTIVE_NEXT_ACTION_REASON,
   PROJECT_NO_NEXT_ACTION_DETAIL,
+  PROJECT_NO_NEXT_ACTION_REASON,
   buildProjectRelationshipIssue,
   hasBrokenNextCandidate,
 } from '@/lib/tasks/relationships';
@@ -327,6 +329,53 @@ export function buildStalledProjectList(projects: Project[], limit = 4, tasks: T
     .slice(0, limit);
 }
 
+
+export function buildOneMinuteReviewTaskList(tasks: Task[], limit = 12, taskMap: Record<string, Task> = {}): StalledTaskItem[] {
+  return tasks
+    .filter((task) => task.status !== 'done' && task.gtd_category !== 'project')
+    .map<StalledTaskItem | null>((task) => {
+      if (isWaitingResponseOverdue(task)) {
+        return { task, reason: 'Waiting期限超過', detail: `回答予定 ${formatRelativeDueText(task.waiting_response_date)}`, tone: 'danger' as const, score: 0 };
+      }
+      if (isDoingStale(task)) {
+        const days = daysFromTimestamp(task.updated_at) ?? 0;
+        return { task, reason: '停滞中', detail: `${days}日更新なし`, tone: 'warning' as const, score: 1 };
+      }
+      if ((task.status === 'todo' || task.status === 'doing') && isOverdue(task.due_date)) {
+        return { task, reason: '停滞中', detail: `期限 ${formatRelativeDueText(task.due_date)}`, tone: 'danger' as const, score: 2 };
+      }
+      return null;
+    })
+    .filter((item): item is StalledTaskItem => Boolean(item))
+    .sort((left, right) => {
+      if (left.score !== right.score) return left.score - right.score;
+      return new Date(right.task.updated_at).getTime() - new Date(left.task.updated_at).getTime();
+    })
+    .slice(0, limit);
+}
+
+export function buildOneMinuteReviewProjectList(projects: Project[], limit = 8, tasks: Task[] = [], taskMap: Record<string, Task> = {}): StalledProjectItem[] {
+  return projects
+    .map<StalledProjectItem | null>((project) => {
+      const relationIssue = buildProjectRelationshipIssue(project, tasks, taskMap);
+      if (relationIssue?.reason === PROJECT_NO_NEXT_ACTION_REASON || relationIssue?.reason === PROJECT_NO_ACTIVE_NEXT_ACTION_REASON) {
+        return {
+          project,
+          reason: '次アクション未設定',
+          detail: relationIssue.detail,
+          tone: relationIssue.reason === PROJECT_NO_NEXT_ACTION_REASON ? 'warning' : 'info',
+          score: relationIssue.reason === PROJECT_NO_NEXT_ACTION_REASON ? 0 : 1,
+        } satisfies StalledProjectItem;
+      }
+      return null;
+    })
+    .filter((item): item is StalledProjectItem => Boolean(item))
+    .sort((left, right) => {
+      if (left.score !== right.score) return left.score - right.score;
+      return right.project.createdAt.localeCompare(left.project.createdAt);
+    })
+    .slice(0, limit);
+}
 function buildProjectFocusEntry(project: Project): FocusProjectItem {
   if (project.overdueCount > 0) {
     return {

@@ -294,10 +294,10 @@ export default function ProjectsViewerPage() {
 
             <div className="flex flex-wrap items-center gap-2">
               <Link
-                href="/projects"
+                href="/projects/health"
                 className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
               >
-                Projects
+                Health
               </Link>
               <Link
                 href="/"
