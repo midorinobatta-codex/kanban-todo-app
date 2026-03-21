@@ -71,6 +71,35 @@ export type ProjectRelationshipIssue = {
   missingNextCandidateTaskIds: string[];
 };
 
+function isTerminalMissingNextCandidateTask(activeLinkedTasks: Task[], taskMap: Record<string, Task>) {
+  const missingNextCandidateTasks = activeLinkedTasks.filter((task) => !task.next_candidate_task_id);
+  if (missingNextCandidateTasks.length !== 1) return false;
+
+  const [terminalCandidate] = missingNextCandidateTasks;
+  if (!terminalCandidate) return false;
+  if (activeLinkedTasks.length === 1) return true;
+
+  const activeLinkedTaskIds = new Set(activeLinkedTasks.map((task) => task.id));
+  const incomingCounts = new Map<string, number>();
+  let internalReferenceCount = 0;
+
+  for (const task of activeLinkedTasks) {
+    if (!task.next_candidate_task_id || task.id === terminalCandidate.id) continue;
+
+    const nextTask = getNextCandidateTask(task, taskMap);
+    if (!nextTask || !activeLinkedTaskIds.has(nextTask.id)) return false;
+
+    internalReferenceCount += 1;
+    incomingCounts.set(nextTask.id, (incomingCounts.get(nextTask.id) ?? 0) + 1);
+  }
+
+  if (internalReferenceCount !== activeLinkedTasks.length - 1) return false;
+  if ((incomingCounts.get(terminalCandidate.id) ?? 0) === 0) return false;
+
+  const rootCount = activeLinkedTasks.filter((task) => (incomingCounts.get(task.id) ?? 0) === 0).length;
+  return rootCount === 1;
+}
+
 export function getProjectRelationshipSnapshot(
   project: Pick<Project, 'id'>,
   tasks: Task[],
@@ -83,6 +112,7 @@ export function getProjectRelationshipSnapshot(
   const brokenCandidateTasks = linkedTasks.filter((task) => hasBrokenNextCandidate(task, taskMap));
   const validCandidateTasks = activeLinkedTasks.filter((task) => Boolean(getNextCandidateTask(task, taskMap)));
   const missingNextCandidateTasks = activeLinkedTasks.filter((task) => !task.next_candidate_task_id);
+  const hasTerminalMissingNextCandidate = brokenCandidateTasks.length === 0 && isTerminalMissingNextCandidateTask(activeLinkedTasks, taskMap);
 
   return {
     linkedTasks,
@@ -90,6 +120,7 @@ export function getProjectRelationshipSnapshot(
     brokenCandidateTasks,
     validCandidateTasks,
     missingNextCandidateTasks,
+    hasTerminalMissingNextCandidate,
   };
 }
 
@@ -98,7 +129,14 @@ export function buildProjectRelationshipIssue(
   tasks: Task[],
   taskMap: Record<string, Task>,
 ): ProjectRelationshipIssue | null {
-  const { linkedTasks, activeLinkedTasks, brokenCandidateTasks, validCandidateTasks, missingNextCandidateTasks } = getProjectRelationshipSnapshot(project, tasks, taskMap);
+  const {
+    linkedTasks,
+    activeLinkedTasks,
+    brokenCandidateTasks,
+    validCandidateTasks,
+    missingNextCandidateTasks,
+    hasTerminalMissingNextCandidate,
+  } = getProjectRelationshipSnapshot(project, tasks, taskMap);
   const brokenCandidateCount = brokenCandidateTasks.length;
   const validCandidateCount = validCandidateTasks.length;
 
@@ -144,7 +182,7 @@ export function buildProjectRelationshipIssue(
     };
   }
 
-  if (missingNextCandidateTasks.length > 0) {
+  if (missingNextCandidateTasks.length > 0 && !hasTerminalMissingNextCandidate) {
     return {
       projectId: project.id,
       reason: 'この後候補未設定 task あり',
