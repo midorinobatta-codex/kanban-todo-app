@@ -53,7 +53,7 @@ function projectMatchesFilter(project: Project, filterKey: ViewerFilterKey, rela
         !project.dueDate ||
         project.linkedTaskCount === 0 ||
         (project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done') ||
-        relationIssue?.reason === 'この後候補なし' ||
+        relationIssue?.reason === 'この後候補未設定 task あり' ||
         relationIssue?.reason === '候補リンク切れ'
       );
     case 'active':
@@ -116,6 +116,7 @@ function buildViewerAlerts(
   projects: Project[],
   projectsWithoutNextCandidates: Project[],
   projectsWithBrokenNextCandidates: Project[],
+  projectsWithoutNextCandidateTaskCount: number,
 ) {
   const missingStart = projects.filter((project) => !project.startedAt).length;
   const missingDue = projects.filter((project) => !project.dueDate).length;
@@ -145,10 +146,10 @@ function buildViewerAlerts(
   if (projectsWithoutNextCandidates.length > 0) {
     items.push({
       id: 'no-next-candidate',
-      label: 'この後候補なし',
-      count: `${projectsWithoutNextCandidates.length}件`,
+      label: 'この後候補未設定 taskあり',
+      count: `${projectsWithoutNextCandidates.length}project / ${projectsWithoutNextCandidateTaskCount}task`,
       tone: 'info',
-      description: '関連タスクはあるが、「この後に見る候補」がまだ未設定です。',
+      description: 'project 内に「この後に見る候補」未設定の active task があります。',
     });
   }
   if (projectsWithBrokenNextCandidates.length > 0) {
@@ -218,10 +219,11 @@ export default function ProjectsViewerPage() {
     [filteredProjects],
   );
 
-  const projectsWithoutNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === 'この後候補なし'), [filteredProjects, projectRelationshipIssues]);
+  const projectsWithoutNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === 'この後候補未設定 task あり'), [filteredProjects, projectRelationshipIssues]);
   const projectsWithBrokenNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === '候補リンク切れ'), [filteredProjects, projectRelationshipIssues]);
+  const projectsWithoutNextCandidateTaskCount = useMemo(() => projectsWithoutNextCandidates.reduce((sum, project) => sum + (projectRelationshipIssues[project.id]?.missingNextCandidateTaskIds.length ?? 0), 0), [projectRelationshipIssues, projectsWithoutNextCandidates]);
 
-  const alerts = useMemo(() => buildViewerAlerts(filteredProjects, projectsWithoutNextCandidates, projectsWithBrokenNextCandidates), [filteredProjects, projectsWithBrokenNextCandidates, projectsWithoutNextCandidates]);
+  const alerts = useMemo(() => buildViewerAlerts(filteredProjects, projectsWithoutNextCandidates, projectsWithBrokenNextCandidates, projectsWithoutNextCandidateTaskCount), [filteredProjects, projectsWithBrokenNextCandidates, projectsWithoutNextCandidateTaskCount, projectsWithoutNextCandidates]);
   const timelineDays = useMemo(() => buildTimelineDays(ganttProjects), [ganttProjects]);
   const totalTimelineWidth = timelineDays.length * DAY_WIDTH;
   const todayIndex = useMemo(() => {
@@ -387,7 +389,7 @@ export default function ProjectsViewerPage() {
               <RiskChip label="期限未設定" count={stalledProjectBuckets.noDueDate.length} />
               <RiskChip label="次アクション未設定" count={stalledProjectBuckets.noActions.length} />
               <RiskChip label="進める一手なし" count={stalledProjectBuckets.noActiveActions.length} />
-              <RiskChip label="この後候補なし" count={stalledProjectBuckets.noNextCandidate.length} />
+              <RiskChip label="この後候補未設定" count={stalledProjectBuckets.noNextCandidate.length} />
               <RiskChip label="候補リンク切れ" count={stalledProjectBuckets.brokenNextCandidate.length} />
             </div>
             <div className="mt-2 space-y-2">

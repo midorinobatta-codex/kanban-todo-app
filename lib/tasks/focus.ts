@@ -241,7 +241,7 @@ export function buildProjectStalledBuckets(projects: Project[], tasks: Task[] = 
       if (project.status === 'waiting') acc.waiting.push(project);
       const relationIssue = buildProjectRelationshipIssue(project, tasks, taskMap);
       if (relationIssue?.reason === '候補リンク切れ') acc.brokenNextCandidate.push(project);
-      if (relationIssue?.reason === 'この後候補なし') acc.noNextCandidate.push(project);
+      if (relationIssue?.reason === 'この後候補未設定 task あり') acc.noNextCandidate.push(project);
       return acc;
     },
     {

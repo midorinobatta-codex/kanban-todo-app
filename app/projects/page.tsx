@@ -184,7 +184,7 @@ export default function ProjectsPage() {
 
   const projectsWithoutNextCandidates = useMemo(() => {
     return filteredAndSortedProjects.filter((project) =>
-      buildProjectRelationshipIssue(project, tasks, taskMap)?.reason === 'この後候補なし',
+      buildProjectRelationshipIssue(project, tasks, taskMap)?.reason === 'この後候補未設定 task あり',
     );
   }, [filteredAndSortedProjects, taskMap, tasks]);
 
@@ -200,6 +200,7 @@ export default function ProjectsPage() {
       return acc;
     }, {});
   }, [filteredAndSortedProjects, taskMap, tasks]);
+  const projectsWithoutNextCandidateTaskCount = useMemo(() => projectsWithoutNextCandidates.reduce((sum, project) => sum + (projectRelationshipIssues[project.id]?.missingNextCandidateTaskIds.length ?? 0), 0), [projectRelationshipIssues, projectsWithoutNextCandidates]);
 
   const projectAlertItems = useMemo(() => {
     const items: AlertStripItem[] = [];
@@ -249,10 +250,10 @@ export default function ProjectsPage() {
     if (projectsWithoutNextCandidates.length > 0) {
       items.push({
         id: 'no-next-candidates',
-        label: 'この後候補なし',
-        count: `${projectsWithoutNextCandidates.length}件`,
+        label: 'この後候補未設定 taskあり',
+        count: `${projectsWithoutNextCandidates.length}project / ${projectsWithoutNextCandidateTaskCount}task`,
         tone: 'info',
-        description: '関連タスクはあるが、「この後に見る候補」がまだ未設定です。',
+        description: 'project 内に「この後に見る候補」未設定の active task があります。',
         href: '#no-next-candidate-projects',
       });
     }
@@ -269,7 +270,7 @@ export default function ProjectsPage() {
     }
 
     return items;
-  }, [missingDueProjects.length, missingStartProjects.length, projectsWithBrokenNextCandidates.length, projectsWithoutActions.length, projectsWithoutActiveActions.length, projectsWithoutNextCandidates.length]);
+  }, [missingDueProjects.length, missingStartProjects.length, projectsWithBrokenNextCandidates.length, projectsWithoutActions.length, projectsWithoutActiveActions.length, projectsWithoutNextCandidateTaskCount, projectsWithoutNextCandidates.length]);
 
   const stats = useMemo(() => {
     const visibleProjectCount = filteredAndSortedProjects.length;
@@ -580,10 +581,10 @@ export default function ProjectsPage() {
           <details id="no-next-candidate-projects" className="group rounded-2xl border border-cyan-200 bg-cyan-50/40 p-5 shadow-sm">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden [&::-webkit-details-marker]:hidden">
               <div>
-                <h2 className="text-lg font-semibold text-slate-900">この後候補なし</h2>
-                <p className="mt-1 text-sm text-slate-600">進める一手はあるものの、「この後に見る候補」がまだ未設定の project です。</p>
+                <h2 className="text-lg font-semibold text-slate-900">この後候補未設定 taskあり</h2>
+                <p className="mt-1 text-sm text-slate-600">project 単位の警告です。詳細では、未設定の active task を一覧で確認できます。</p>
               </div>
-              <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] text-cyan-700">{projectsWithoutNextCandidates.length}件</span>
+              <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] text-cyan-700">{projectsWithoutNextCandidates.length}project / {projectsWithoutNextCandidateTaskCount}task</span>
             </summary>
 
             {projectsWithoutNextCandidates.length === 0 ? (
@@ -599,7 +600,7 @@ export default function ProjectsPage() {
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <div className="font-medium text-slate-900">{formatProjectDisplayName(project.title)}</div>
-                        <div className="mt-1 text-xs text-cyan-700">関連タスクはあるが、終わった後に見る候補がまだありません</div>
+                        <div className="mt-1 text-xs text-cyan-700">{projectRelationshipIssues[project.id]?.detail ?? 'active task の「この後に見る候補」が未設定です'}</div>
                       </div>
                       <span className="rounded-full bg-cyan-100 px-2 py-1 text-[11px] font-medium text-cyan-700">要確認</span>
                     </div>
@@ -800,7 +801,7 @@ export default function ProjectsPage() {
                     <RiskChip label="期限未設定" count={stalledProjectBuckets.noDueDate.length} />
                     <RiskChip label="次アクション未設定" count={stalledProjectBuckets.noActions.length} />
                     <RiskChip label="進める一手なし" count={stalledProjectBuckets.noActiveActions.length} />
-                    <RiskChip label="この後候補なし" count={stalledProjectBuckets.noNextCandidate.length} />
+                    <RiskChip label="この後候補未設定" count={stalledProjectBuckets.noNextCandidate.length} />
                     <RiskChip label="候補リンク切れ" count={stalledProjectBuckets.brokenNextCandidate.length} />
                   </div>
                   <div className="mt-2 space-y-2">
@@ -839,7 +840,7 @@ export default function ProjectsPage() {
                     ? 'border-amber-200 ring-1 ring-amber-100'
                     : project.nextActionCount === 0 && project.status !== 'done'
                       ? 'border-sky-200 ring-1 ring-sky-100'
-                      : relationIssue?.reason === 'この後候補なし'
+                      : relationIssue?.reason === 'この後候補未設定 task あり'
                         ? 'border-cyan-200 ring-1 ring-cyan-100'
                         : relationIssue?.reason === '候補リンク切れ'
                           ? 'border-rose-200 ring-1 ring-rose-100'
@@ -875,9 +876,9 @@ export default function ProjectsPage() {
                             <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700">
                               進める一手なし
                             </span>
-                          ) : relationIssue?.reason === 'この後候補なし' ? (
+                          ) : relationIssue?.reason === 'この後候補未設定 task あり' ? (
                             <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-medium text-cyan-700">
-                              この後候補なし
+                              この後候補未設定
                             </span>
                           ) : relationIssue?.reason === '候補リンク切れ' ? (
                             <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-medium text-rose-700">
@@ -900,7 +901,8 @@ export default function ProjectsPage() {
                         <InfoChip label="状態" value={statusLabel(project.status)} />
                         {project.linkedTaskCount === 0 ? <InfoChip label="要確認" value="次アクション未設定" warning /> : null}
                         {project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done' ? <InfoChip label="要確認" value="進める一手なし" /> : null}
-                        {relationIssue?.reason === 'この後候補なし' ? <InfoChip label="要確認" value="この後候補なし" /> : null}
+                        {relationIssue?.reason === 'この後候補未設定 task あり' ? <InfoChip label="要確認" value="この後候補未設定" /> : null}
+                        {relationIssue?.reason === 'この後候補未設定 task あり' ? <InfoChip label="未設定task" value={`${relationIssue.missingNextCandidateTaskIds.length}件`} /> : null}
                         {relationIssue?.reason === '候補リンク切れ' ? <InfoChip label="要確認" value="候補リンク切れ" danger /> : null}
                         <InfoChip label="進める一手" value={`${project.nextActionCount}件`} />
                         <InfoChip label="関連タスク" value={`${project.linkedTaskCount}件`} />
@@ -917,7 +919,7 @@ export default function ProjectsPage() {
                         {!project.dueDate ? <FilterChip label="期限未設定" /> : null}
                         {project.linkedTaskCount === 0 ? <FilterChip label="次アクション未設定" subtle /> : null}
                         {project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done' ? <FilterChip label="進める一手なし" subtle /> : null}
-                        {relationIssue?.reason === 'この後候補なし' ? <FilterChip label="この後候補なし" subtle /> : null}
+                        {relationIssue?.reason === 'この後候補未設定 task あり' ? <FilterChip label="この後候補未設定" subtle /> : null}
                         {relationIssue?.reason === '候補リンク切れ' ? <FilterChip label="候補リンク切れ" subtle /> : null}
                       </div>
                     </Link>
