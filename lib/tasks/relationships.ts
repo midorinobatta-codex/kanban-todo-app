@@ -65,19 +65,42 @@ export type ProjectRelationshipIssue = {
   detail: string;
   tone: 'danger' | 'warning' | 'info';
   score: number;
+  linkedTaskCount: number;
+  activeLinkedTaskCount: number;
+  brokenCandidateTaskIds: string[];
+  missingNextCandidateTaskIds: string[];
 };
+
+export function getProjectRelationshipSnapshot(
+  project: Pick<Project, 'id'>,
+  tasks: Task[],
+  taskMap: Record<string, Task>,
+) {
+  const linkedTasks = tasks.filter(
+    (task) => task.gtd_category === 'next_action' && task.project_task_id === project.id,
+  );
+  const activeLinkedTasks = linkedTasks.filter((task) => task.status !== 'done');
+  const brokenCandidateTasks = linkedTasks.filter((task) => hasBrokenNextCandidate(task, taskMap));
+  const validCandidateTasks = activeLinkedTasks.filter((task) => Boolean(getNextCandidateTask(task, taskMap)));
+  const missingNextCandidateTasks = activeLinkedTasks.filter((task) => !task.next_candidate_task_id);
+
+  return {
+    linkedTasks,
+    activeLinkedTasks,
+    brokenCandidateTasks,
+    validCandidateTasks,
+    missingNextCandidateTasks,
+  };
+}
 
 export function buildProjectRelationshipIssue(
   project: Project,
   tasks: Task[],
   taskMap: Record<string, Task>,
 ): ProjectRelationshipIssue | null {
-  const linkedTasks = tasks.filter(
-    (task) => task.gtd_category === 'next_action' && task.project_task_id === project.id,
-  );
-  const activeLinkedTasks = linkedTasks.filter((task) => task.status !== 'done');
-  const brokenCandidateCount = linkedTasks.filter((task) => hasBrokenNextCandidate(task, taskMap)).length;
-  const validCandidateCount = activeLinkedTasks.filter((task) => Boolean(getNextCandidateTask(task, taskMap))).length;
+  const { linkedTasks, activeLinkedTasks, brokenCandidateTasks, validCandidateTasks, missingNextCandidateTasks } = getProjectRelationshipSnapshot(project, tasks, taskMap);
+  const brokenCandidateCount = brokenCandidateTasks.length;
+  const validCandidateCount = validCandidateTasks.length;
 
   if (brokenCandidateCount > 0) {
     return {
@@ -86,6 +109,10 @@ export function buildProjectRelationshipIssue(
       detail: `${brokenCandidateCount}件の「この後に見る候補」を見直したい状態です`,
       tone: 'warning',
       score: 1,
+      linkedTaskCount: linkedTasks.length,
+      activeLinkedTaskCount: activeLinkedTasks.length,
+      brokenCandidateTaskIds: brokenCandidateTasks.map((task) => task.id),
+      missingNextCandidateTaskIds: missingNextCandidateTasks.map((task) => task.id),
     };
   }
 
@@ -96,6 +123,10 @@ export function buildProjectRelationshipIssue(
       detail: PROJECT_NO_NEXT_ACTION_DETAIL,
       tone: 'warning',
       score: 2,
+      linkedTaskCount: linkedTasks.length,
+      activeLinkedTaskCount: activeLinkedTasks.length,
+      brokenCandidateTaskIds: brokenCandidateTasks.map((task) => task.id),
+      missingNextCandidateTaskIds: missingNextCandidateTasks.map((task) => task.id),
     };
   }
 
@@ -106,16 +137,27 @@ export function buildProjectRelationshipIssue(
       detail: PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
       tone: 'info',
       score: 3,
+      linkedTaskCount: linkedTasks.length,
+      activeLinkedTaskCount: activeLinkedTasks.length,
+      brokenCandidateTaskIds: brokenCandidateTasks.map((task) => task.id),
+      missingNextCandidateTaskIds: missingNextCandidateTasks.map((task) => task.id),
     };
   }
 
-  if (activeLinkedTasks.length > 0 && validCandidateCount === 0) {
+  if (missingNextCandidateTasks.length > 0) {
     return {
       projectId: project.id,
-      reason: 'この後候補なし',
-      detail: '関連タスクはあるが、終わった後に見る候補がまだありません',
+      reason: 'この後候補未設定 task あり',
+      detail:
+        validCandidateCount === 0
+          ? `${missingNextCandidateTasks.length}件の進行中 task で「この後に見る候補」が未設定です`
+          : `${missingNextCandidateTasks.length}件の進行中 task で「この後に見る候補」が未設定です（設定済み ${validCandidateCount}件）`,
       tone: 'info',
       score: 4,
+      linkedTaskCount: linkedTasks.length,
+      activeLinkedTaskCount: activeLinkedTasks.length,
+      brokenCandidateTaskIds: brokenCandidateTasks.map((task) => task.id),
+      missingNextCandidateTaskIds: missingNextCandidateTasks.map((task) => task.id),
     };
   }
 
