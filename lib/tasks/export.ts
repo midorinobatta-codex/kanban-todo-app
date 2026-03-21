@@ -83,6 +83,7 @@ export function buildProjectExportRows(projects: Project[]) {
     status: project.status,
     startedAt: formatDate(project.startedAt, ''),
     dueDate: formatDate(project.dueDate, ''),
+    linkedTaskCount: project.linkedTaskCount,
     nextActionCount: project.nextActionCount,
     doneCount: project.doneCount,
     overdueCount: project.overdueCount,

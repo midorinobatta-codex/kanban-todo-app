@@ -16,6 +16,7 @@ export type Project = {
   startedAt: string | null;
   dueDate: string | null;
   status: 'todo' | 'doing' | 'waiting' | 'done';
+  linkedTaskCount: number;
   nextActionCount: number;
   doneCount: number;
   overdueCount: number;
@@ -35,6 +36,7 @@ export function mapProjectRow(row: ProjectRow): Project {
     startedAt: row.started_at,
     dueDate: row.due_date,
     status: row.status,
+    linkedTaskCount: 0,
     nextActionCount: 0,
     doneCount: 0,
     overdueCount: 0,

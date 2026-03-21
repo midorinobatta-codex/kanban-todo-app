@@ -257,7 +257,7 @@ export function ProjectGantt({ projects }: ProjectGanttProps) {
                         <p className={dueOverdue ? 'font-medium text-rose-600' : 'text-slate-700'}>
                           {formatDateOnlyLabel(project.dueDate)}
                         </p>
-                        <p className="text-[11px] text-slate-500">{project.nextActionCount}件</p>
+                        <p className="text-[11px] text-slate-500">進める一手 {project.nextActionCount}件</p>
                       </div>
                     </div>
                   );

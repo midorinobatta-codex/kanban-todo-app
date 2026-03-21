@@ -8,7 +8,10 @@ import { AlertStrip, type AlertStripItem } from '@/components/ui/alert-strip';
 import { ExportActions } from '@/components/ui/export-actions';
 import { HistoryPanel } from '@/components/ui/history-panel';
 import { formatDate, formatProjectDisplayName } from '@/lib/tasks/presentation';
-import { PROJECT_NO_NEXT_ACTION_DETAIL } from '@/lib/tasks/relationships';
+import {
+  PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+  PROJECT_NO_NEXT_ACTION_DETAIL,
+} from '@/lib/tasks/relationships';
 import { buildHistoryRows, buildProjectExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildProjectFocusDeck, buildProjectStalledBuckets, buildStalledProjectList } from '@/lib/tasks/focus';
@@ -99,14 +102,10 @@ function filterProjectsByQuickFilter(
       return projects.filter((project) => project.overdueCount > 0);
 
     case 'incomplete_only':
-      return projects.filter(
-        (project) => project.nextActionCount > 0 && project.completionRate < 100,
-      );
+      return projects.filter((project) => project.linkedTaskCount > 0 && project.completionRate < 100);
 
     case 'completed_only':
-      return projects.filter(
-        (project) => project.nextActionCount > 0 && project.completionRate === 100,
-      );
+      return projects.filter((project) => project.linkedTaskCount > 0 && project.completionRate === 100);
 
     case 'all':
     default:
@@ -169,7 +168,13 @@ export default function ProjectsPage() {
   }, [filteredAndSortedProjects]);
 
   const projectsWithoutActions = useMemo(() => {
-    return filteredAndSortedProjects.filter((project) => project.nextActionCount === 0);
+    return filteredAndSortedProjects.filter((project) => project.linkedTaskCount === 0);
+  }, [filteredAndSortedProjects]);
+
+  const projectsWithoutActiveActions = useMemo(() => {
+    return filteredAndSortedProjects.filter(
+      (project) => project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done',
+    );
   }, [filteredAndSortedProjects]);
 
   const projectAlertItems = useMemo(() => {
@@ -206,8 +211,19 @@ export default function ProjectsPage() {
       });
     }
 
+    if (projectsWithoutActiveActions.length > 0) {
+      items.push({
+        id: 'no-active-actions',
+        label: '進める一手なし',
+        count: `${projectsWithoutActiveActions.length}件`,
+        tone: 'info',
+        description: PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+        href: '#no-active-action-projects',
+      });
+    }
+
     return items;
-  }, [missingDueProjects.length, missingStartProjects.length, projectsWithoutActions.length]);
+  }, [missingDueProjects.length, missingStartProjects.length, projectsWithoutActions.length, projectsWithoutActiveActions.length]);
 
   const stats = useMemo(() => {
     const visibleProjectCount = filteredAndSortedProjects.length;
@@ -479,6 +495,41 @@ export default function ProjectsPage() {
 
           </details>
 
+          <details id="no-active-action-projects" className="group rounded-2xl border border-sky-200 bg-sky-50/40 p-5 shadow-sm">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden [&::-webkit-details-marker]:hidden">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">進める一手なし</h2>
+                <p className="mt-1 text-sm text-slate-600">関連タスクはあるものの、未完了の一手が残っていない project です。</p>
+              </div>
+              <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] text-sky-700">{projectsWithoutActiveActions.length}件</span>
+            </summary>
+
+            {projectsWithoutActiveActions.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-400">該当なし</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {projectsWithoutActiveActions.map((project) => (
+                  <Link
+                    key={project.id}
+                    href={`/projects/${project.id}`}
+                    className="block rounded-xl border border-sky-200 bg-white px-4 py-3 text-sm transition hover:bg-sky-50/60"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-slate-900">{formatProjectDisplayName(project.title)}</div>
+                        <div className="mt-1 text-xs text-sky-700">{PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL}</div>
+                      </div>
+                      <span className="rounded-full bg-sky-100 px-2 py-1 text-[11px] font-medium text-sky-700">要確認</span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">
+                      {statusLabel(project.status)} / 関連タスク {project.linkedTaskCount}件 / 完了 {project.doneCount}件
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </details>
+
 
           <details id="no-action-projects" className="group rounded-2xl border border-amber-200 bg-amber-50/40 p-5 shadow-sm">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden [&::-webkit-details-marker]:hidden">
@@ -632,6 +683,7 @@ export default function ProjectsPage() {
                     <RiskChip label="開始日未記録" count={stalledProjectBuckets.noStartedAt.length} />
                     <RiskChip label="期限未設定" count={stalledProjectBuckets.noDueDate.length} />
                     <RiskChip label="次アクション未設定" count={stalledProjectBuckets.noActions.length} />
+                    <RiskChip label="進める一手なし" count={stalledProjectBuckets.noActiveActions.length} />
                   </div>
                   <div className="mt-2 space-y-2">
                     {stalledProjects.length === 0 ? (
@@ -666,7 +718,7 @@ export default function ProjectsPage() {
                 {visibleProjects.map((project) => (
                   <article
                     key={project.id}
-                    className={`rounded-2xl border bg-white p-5 shadow-sm transition hover:bg-slate-50/60 ${project.nextActionCount === 0 ? 'border-amber-200 ring-1 ring-amber-100' : 'border-slate-200 hover:border-slate-300'}`}
+                    className={`rounded-2xl border bg-white p-5 shadow-sm transition hover:bg-slate-50/60 ${project.linkedTaskCount === 0 ? 'border-amber-200 ring-1 ring-amber-100' : project.nextActionCount === 0 && project.status !== 'done' ? 'border-sky-200 ring-1 ring-sky-100' : 'border-slate-200 hover:border-slate-300'}`}
                   >
                     <Link
                       href={`/projects/${project.id}`}
@@ -685,9 +737,13 @@ export default function ProjectsPage() {
                           <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-medium text-slate-700">
                             {project.completionRate}%
                           </span>
-                          {project.nextActionCount === 0 ? (
+                          {project.linkedTaskCount === 0 ? (
                             <span className="rounded-full bg-amber-100 px-2.5 py-1 text-[11px] font-medium text-amber-700">
                               次アクション未設定
+                            </span>
+                          ) : project.nextActionCount === 0 && project.status !== 'done' ? (
+                            <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700">
+                              進める一手なし
                             </span>
                           ) : null}
                         </div>
@@ -704,8 +760,10 @@ export default function ProjectsPage() {
                         <InfoChip label="開始" value={formatDate(project.startedAt)} />
                         <InfoChip label="期限" value={formatDate(project.dueDate)} />
                         <InfoChip label="状態" value={statusLabel(project.status)} />
-                        {project.nextActionCount === 0 ? <InfoChip label="要確認" value="次アクション未設定" warning /> : null}
-                        <InfoChip label="次アクション" value={`${project.nextActionCount}件`} />
+                        {project.linkedTaskCount === 0 ? <InfoChip label="要確認" value="次アクション未設定" warning /> : null}
+                        {project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done' ? <InfoChip label="要確認" value="進める一手なし" /> : null}
+                        <InfoChip label="進める一手" value={`${project.nextActionCount}件`} />
+                        <InfoChip label="関連タスク" value={`${project.linkedTaskCount}件`} />
                         <InfoChip label="完了" value={`${project.doneCount}件`} />
                         <InfoChip
                           label="期限超過"
@@ -717,7 +775,8 @@ export default function ProjectsPage() {
                       <div className="mt-4 flex flex-wrap gap-2">
                         {!project.startedAt ? <FilterChip label="開始日未記録" /> : null}
                         {!project.dueDate ? <FilterChip label="期限未設定" /> : null}
-                        {project.nextActionCount === 0 ? <FilterChip label="次アクション未設定" subtle /> : null}
+                        {project.linkedTaskCount === 0 ? <FilterChip label="次アクション未設定" subtle /> : null}
+                        {project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done' ? <FilterChip label="進める一手なし" subtle /> : null}
                       </div>
                     </Link>
 
