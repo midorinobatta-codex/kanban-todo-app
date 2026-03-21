@@ -266,7 +266,7 @@ export default function ProjectDetailPage() {
         id: `relation-${relationIssue.reason}`,
         label: relationIssue.reason,
         description: relationIssue.detail,
-        count: relationIssue.reason === 'この後候補未設定 task あり' ? `${relationIssue.missingNextCandidateTaskIds.length}task` : undefined,
+        count: relationIssue.reason === '次候補なし task あり' ? `${relationIssue.missingNextCandidateTaskIds.length}task` : undefined,
         tone: relationIssue.tone,
       });
     }
@@ -1671,7 +1671,7 @@ export default function ProjectDetailPage() {
                         <div className="flex items-start justify-between gap-3">
                           <div>
                             <div className="font-medium text-slate-900">{task.title}</div>
-                            <div className="mt-1 text-xs text-cyan-700">要確認: この後に見る候補が未設定です</div>
+                            <div className="mt-1 text-xs text-cyan-700">要確認: 次候補なし</div>
                           </div>
                           <span className="rounded-full bg-cyan-100 px-2 py-1 text-[11px] font-medium text-cyan-700">{TASK_PROGRESS_LABELS[task.status]}</span>
                         </div>
@@ -1861,10 +1861,10 @@ function FeaturedLinkedTaskCard({
         {projectGoal ? <span className="rounded-full bg-slate-100 px-2.5 py-1 text-slate-600">目的メモ: {projectGoal}</span> : null}
         {task.next_candidate_task_id ? (
           <span className={`rounded-full px-2.5 py-1 ${brokenNextCandidate ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>
-            この後に見る候補: {nextCandidate?.title ?? 'リンク切れ'}
+            次候補: {nextCandidate?.title ?? 'リンク切れ'}
           </span>
         ) : null}
-        {missingNextCandidate ? <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-cyan-700">要確認: この後候補未設定</span> : null}
+        {missingNextCandidate ? <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-cyan-700">要確認: 次候補なし</span> : null}
       </div>
       <div className="mt-4 flex flex-wrap gap-2">
         <button type="button" onClick={onDone} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white transition hover:bg-slate-800">完了</button>
@@ -1922,10 +1922,10 @@ function LinkedTaskMiniCard({
           {projectGoal ? <div className="mt-1 text-[11px] text-slate-500">目的メモ: {projectGoal}</div> : null}
           {task.next_candidate_task_id ? (
             <div className={`mt-1 text-[11px] ${brokenNextCandidate ? 'text-amber-700' : 'text-blue-700'}`}>
-              この後に見る候補: {nextCandidate?.title ?? 'リンク切れ'}
+              次候補: {nextCandidate?.title ?? 'リンク切れ'}
             </div>
           ) : null}
-          {missingNextCandidate ? <div className="mt-1 text-[11px] text-cyan-700">要確認: この後に見る候補が未設定です</div> : null}
+          {missingNextCandidate ? <div className="mt-1 text-[11px] text-cyan-700">要確認: 次候補なし</div> : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" onClick={onOpen} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-medium text-slate-700 transition hover:bg-slate-50">開く</button>
@@ -2104,14 +2104,14 @@ function LinkedTaskCard({
 
         {task.next_candidate_task_id ? (
           <Tag
-            label={`この後に見る候補: ${nextCandidate?.title ?? 'リンク切れ'}`}
+            label={`次候補: ${nextCandidate?.title ?? 'リンク切れ'}`}
             className={brokenNextCandidate ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-700'}
           />
         ) : null}
 
         {missingNextCandidate ? (
           <Tag
-            label="要確認: この後に見る候補未設定"
+            label="要確認: 次候補なし"
             className="bg-cyan-100 text-cyan-700"
           />
         ) : null}

@@ -5487,7 +5487,7 @@ function TaskCard({
 
         {task.next_candidate_task_id && mode !== 'kanban' ? (
           <span className={`rounded-md px-2 py-1 ${hasBrokenCandidate ? 'bg-amber-100 text-amber-700' : 'bg-blue-50 text-blue-700'}`}>
-            この後に見る候補: {nextCandidateTask?.title ?? 'リンク切れ'}
+            次候補: {nextCandidateTask?.title ?? 'リンク切れ'}
           </span>
         ) : null}
       </div>

@@ -144,7 +144,7 @@ export function buildProjectRelationshipIssue(
     return {
       projectId: project.id,
       reason: '候補リンク切れ',
-      detail: `${brokenCandidateCount}件の「この後に見る候補」を見直したい状態です`,
+      detail: `${brokenCandidateCount}件の「次候補」を見直したい状態です`,
       tone: 'warning',
       score: 1,
       linkedTaskCount: linkedTasks.length,
@@ -185,11 +185,11 @@ export function buildProjectRelationshipIssue(
   if (missingNextCandidateTasks.length > 0 && !hasTerminalMissingNextCandidate) {
     return {
       projectId: project.id,
-      reason: 'この後候補未設定 task あり',
+      reason: '次候補なし task あり',
       detail:
         validCandidateCount === 0
-          ? `${missingNextCandidateTasks.length}件の進行中 task で「この後に見る候補」が未設定です`
-          : `${missingNextCandidateTasks.length}件の進行中 task で「この後に見る候補」が未設定です（設定済み ${validCandidateCount}件）`,
+          ? `${missingNextCandidateTasks.length}件の進行中 task で「次候補」が未設定です`
+          : `${missingNextCandidateTasks.length}件の進行中 task で「次候補」が未設定です（設定済み ${validCandidateCount}件）`,
       tone: 'info',
       score: 4,
       linkedTaskCount: linkedTasks.length,
