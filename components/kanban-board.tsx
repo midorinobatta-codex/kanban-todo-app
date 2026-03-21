@@ -56,6 +56,8 @@ import {
 import { buildHistoryRows, buildTaskExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
 import {
+  buildOneMinuteReviewProjectList,
+  buildOneMinuteReviewTaskList,
   buildProjectStalledBuckets,
   buildStalledProjectList,
   buildStalledTaskList,
@@ -681,6 +683,7 @@ export function KanbanBoard({
   const [projectFilterId, setProjectFilterId] = useState('all');
   const [newTask, setNewTask] = useState(defaultNewTaskState);
   const [quickCaptureInput, setQuickCaptureInput] = useState('');
+  const [quickCaptureHint, setQuickCaptureHint] = useState<string | null>(null);
   const [quickCaptureSaving, setQuickCaptureSaving] = useState(false);
   const [templateForm, setTemplateForm] = useState(defaultNewTemplateState);
   const [templates, setTemplates] = useState<TaskTemplate[]>([]);
@@ -699,6 +702,7 @@ export function KanbanBoard({
   const [showCompletedInKanban, setShowCompletedInKanban] = useState(false);
   const newTaskTitleInputRef = useRef<HTMLInputElement | null>(null);
   const templateTitleInputRef = useRef<HTMLInputElement | null>(null);
+  const quickCaptureInputRef = useRef<HTMLInputElement | null>(null);
   const newTaskFormSectionRef = useRef<HTMLElement | null>(null);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
@@ -1406,9 +1410,9 @@ export function KanbanBoard({
 
   const stalledTaskBuckets = useMemo(() => buildTaskStalledBuckets(visibleTasksForNormalViews, taskMap), [taskMap, visibleTasksForNormalViews]);
   const stalledTasks = useMemo(() => buildStalledTaskList(visibleTasksForNormalViews, 4, taskMap), [taskMap, visibleTasksForNormalViews]);
-  const reviewTaskQueue = useMemo(() => buildStalledTaskList(visibleTasksForNormalViews, 12, taskMap), [taskMap, visibleTasksForNormalViews]);
+  const reviewTaskQueue = useMemo(() => buildOneMinuteReviewTaskList(visibleTasksForNormalViews, 12, taskMap), [taskMap, visibleTasksForNormalViews]);
   const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(projects, tasks, taskMap), [projects, taskMap, tasks]);
-  const reviewProjects = useMemo(() => buildStalledProjectList(projects, 8, tasks, taskMap), [projects, taskMap, tasks]);
+  const reviewProjects = useMemo(() => buildOneMinuteReviewProjectList(projects, 8, tasks, taskMap), [projects, taskMap, tasks]);
 
   const boardAlertItems = useMemo(() => {
     const items: AlertStripItem[] = [];
@@ -1494,24 +1498,18 @@ export function KanbanBoard({
   );
 
   const reviewSummary = useMemo(() => {
-    const stalledTaskIds = new Set([
-      ...stalledTaskBuckets.waitingOverdue.map((task) => task.id),
-      ...stalledTaskBuckets.waitingNoDate.map((task) => task.id),
-      ...stalledTaskBuckets.brokenNextCandidate.map((task) => task.id),
-      ...stalledTaskBuckets.doingStale.map((task) => task.id),
-      ...stalledTaskBuckets.overdueTodo.map((task) => task.id),
-    ]);
+    const stalledTaskIds = new Set(reviewTaskQueue.map((item) => item.task.id));
 
     return {
       stalledCount: stalledTaskIds.size,
       waitingOverdueCount: stalledTaskBuckets.waitingOverdue.length,
-      waitingNoDateCount: stalledTaskBuckets.waitingNoDate.length,
+      waitingNoDateCount: 0,
       projectNoActionCount: stalledProjectBuckets.noActions.length,
       projectNoActiveActionCount: stalledProjectBuckets.noActiveActions.length,
       wipCount: groupedTasks.doing.length,
       overdueTaskCount: stalledTaskBuckets.overdueTodo.length,
     };
-  }, [groupedTasks.doing.length, stalledProjectBuckets.noActions.length, stalledProjectBuckets.noActiveActions.length, stalledTaskBuckets]);
+  }, [groupedTasks.doing.length, reviewTaskQueue, stalledProjectBuckets.noActions.length, stalledProjectBuckets.noActiveActions.length, stalledTaskBuckets.overdueTodo.length, stalledTaskBuckets.waitingOverdue.length]);
 
   const reviewTaskProjectCount = useMemo(
     () => reviewTaskQueue.filter((item) => Boolean(item.task.project_task_id)).length,
@@ -1526,12 +1524,10 @@ export function KanbanBoard({
   const reviewFilterQuickActions = useMemo(
     () => [
       { key: 'reviewAll', label: '対象すべて', count: reviewTargetTaskIds.length, taskIds: reviewTargetTaskIds },
-      { key: 'reviewWaiting', label: '回答超過', count: stalledTaskBuckets.waitingOverdue.length, taskIds: stalledTaskBuckets.waitingOverdue.map((task) => task.id) },
-      { key: 'reviewNoDate', label: '待ち日付未設定', count: stalledTaskBuckets.waitingNoDate.length, taskIds: stalledTaskBuckets.waitingNoDate.map((task) => task.id) },
-      { key: 'reviewBrokenNext', label: '候補リンク切れ', count: stalledTaskBuckets.brokenNextCandidate.length, taskIds: stalledTaskBuckets.brokenNextCandidate.map((task) => task.id) },
-      { key: 'reviewDoing', label: '進行停滞', count: stalledTaskBuckets.doingStale.length, taskIds: stalledTaskBuckets.doingStale.map((task) => task.id) },
-    ],
-    [reviewTargetTaskIds, stalledTaskBuckets.brokenNextCandidate, stalledTaskBuckets.doingStale, stalledTaskBuckets.waitingNoDate, stalledTaskBuckets.waitingOverdue],
+      { key: 'reviewWaiting', label: 'Waiting期限超過', count: stalledTaskBuckets.waitingOverdue.length, taskIds: stalledTaskBuckets.waitingOverdue.map((task) => task.id) },
+      { key: 'reviewStalled', label: '停滞中', count: stalledTaskBuckets.doingStale.length + stalledTaskBuckets.overdueTodo.length, taskIds: [...stalledTaskBuckets.doingStale.map((task) => task.id), ...stalledTaskBuckets.overdueTodo.map((task) => task.id)] },
+    ].map((item) => ({ ...item, taskIds: Array.from(new Set(item.taskIds)) })),
+    [reviewTargetTaskIds, stalledTaskBuckets.doingStale, stalledTaskBuckets.overdueTodo, stalledTaskBuckets.waitingOverdue],
   );
 
   const toggleSectionExpanded = useCallback((key: string) => {
@@ -1716,6 +1712,33 @@ export function KanbanBoard({
     void syncTemplateTasks('auto');
   }, [syncTemplateTasks, templatesReady, todayKey]);
 
+  useEffect(() => {
+    if (!quickCaptureHint) return;
+    const timerId = window.setTimeout(() => setQuickCaptureHint(null), 2200);
+    return () => window.clearTimeout(timerId);
+  }, [quickCaptureHint]);
+
+  useEffect(() => {
+    const handleQuickCaptureShortcut = (event: globalThis.KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTypingTarget = target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target?.isContentEditable;
+
+      if ((event.key === 'q' || event.key === 'Q') && !event.metaKey && !event.ctrlKey && !event.altKey && !isTypingTarget) {
+        event.preventDefault();
+        quickCaptureInputRef.current?.focus();
+        quickCaptureInputRef.current?.select();
+      }
+
+      if (event.key === 'Escape' && document.activeElement === quickCaptureInputRef.current) {
+        setQuickCaptureInput('');
+        setQuickCaptureHint('入力をクリアしました');
+      }
+    };
+
+    window.addEventListener('keydown', handleQuickCaptureShortcut);
+    return () => window.removeEventListener('keydown', handleQuickCaptureShortcut);
+  }, []);
+
   const addQuickCapturedTask = useCallback(
     async (event: FormEvent<HTMLFormElement>) => {
       event.preventDefault();
@@ -1754,6 +1777,7 @@ export function KanbanBoard({
       } else {
         setTasks((prev) => [data as Task, ...prev]);
         setQuickCaptureInput('');
+        setQuickCaptureHint(parsed.appliedTags.length > 0 ? `適用: ${parsed.appliedTags.join(' / ')}` : 'タイトルのみでInbox相当へ保存');
         setNotice(`クイック追加: 「${parsed.title}」を保存しました。`);
         appendHistoryEntry({
           scope: 'board',
@@ -2917,15 +2941,26 @@ export function KanbanBoard({
                           クイック追加
                         </span>
                         <span className="hidden text-[11px] text-slate-500 lg:inline">
-                          /wait /next /project /someday / 2026-03-25 / 明日
+                          今日 / 明日 / waiting / project / 2026-03-25 / Qでフォーカス / Escでクリア
                         </span>
                       </div>
                       <input
+                        ref={quickCaptureInputRef}
                         value={quickCaptureInput}
                         onChange={(e) => setQuickCaptureInput(e.target.value)}
-                        placeholder="+ タイトルだけでEnter保存。必要なら /wait /next を付ける"
+                        placeholder="+ タイトルだけでEnter保存。必要なら 今日 / 明日 / waiting / project"
                         className="min-w-0 flex-1 rounded-lg border border-slate-300 px-3 py-2.5 text-sm"
                       />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQuickCaptureInput('');
+                          setQuickCaptureHint('入力をクリアしました');
+                        }}
+                        className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+                      >
+                        クリア
+                      </button>
                       <button
                         type="submit"
                         disabled={quickCaptureSaving}
@@ -3317,7 +3352,7 @@ export function KanbanBoard({
                         <div className="flex items-center justify-between gap-2">
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">止まり案件を順に処理</h3>
-                            <p className="text-[11px] text-slate-500">危険順に並べた処理対象だけを薄く表示します。</p>
+                            <p className="text-[11px] text-slate-500">1分で見直す対象だけに絞り、判断理由を添えて並べます。</p>
                           </div>
                           <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 sm:px-2.5 sm:text-[11px]">
                             タスク {reviewTaskQueue.length}件
@@ -3353,7 +3388,7 @@ export function KanbanBoard({
                         <div className="flex items-center justify-between gap-2">
                           <div>
                             <h3 className="text-sm font-semibold text-slate-900">次アクション未設定 / 要確認プロジェクト</h3>
-                            <p className="text-[11px] text-slate-500">project を止めないための確認先</p>
+                            <p className="text-[11px] text-slate-500">次に聞くべき project だけを表示します</p>
                           </div>
                           <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-slate-500 ring-1 ring-slate-200 sm:px-2.5 sm:text-[11px]">
                             project {reviewProjects.length}件
@@ -4029,7 +4064,7 @@ function TodayReviewSupportPanel({
         { label: 'Review対象', value: `${reviewTaskCount + reviewProjectCount}件`, danger: reviewTaskCount + reviewProjectCount > 0 },
         { label: '停滞件数', value: `${reviewSummary.stalledCount}件`, danger: reviewSummary.stalledCount > 0 },
         { label: 'Waiting期限超過', value: `${reviewSummary.waitingOverdueCount}件`, danger: reviewSummary.waitingOverdueCount > 0 },
-        { label: '待ち日付未設定', value: `${reviewSummary.waitingNoDateCount}件`, danger: reviewSummary.waitingNoDateCount > 0 },
+        { label: '期限超過task', value: `${reviewSummary.overdueTaskCount}件`, danger: reviewSummary.overdueTaskCount > 0 },
         { label: '次アクション未設定PJ', value: `${reviewSummary.projectNoActionCount}件`, danger: reviewSummary.projectNoActionCount > 0 },
         { label: '進める一手なしPJ', value: `${reviewSummary.projectNoActiveActionCount}件`, danger: reviewSummary.projectNoActiveActionCount > 0 },
       ]
@@ -4048,7 +4083,7 @@ function TodayReviewSupportPanel({
           <h3 className="text-sm font-semibold text-slate-900">{mode === 'review' ? 'Review補助' : 'Today補助'}</h3>
           <p className="mt-1 text-[11px] text-slate-500">
             {mode === 'review'
-              ? '上部から外した補助情報を左下に集約しています。'
+              ? '停滞・Waiting期限超過・次アクション未設定だけを短時間で処理する補助です。'
               : '実行前の絞り込みと優先候補の確認用です。'}
           </p>
         </div>

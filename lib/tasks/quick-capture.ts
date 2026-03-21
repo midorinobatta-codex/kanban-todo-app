@@ -22,6 +22,7 @@ const GTD_COMMANDS: Record<string, TaskGtdCategory> = {
   '/next': 'next_action',
   '/project': 'project',
   '/someday': 'someday',
+  'project': 'project',
 };
 
 function formatDateKey(value: Date) {
@@ -61,15 +62,21 @@ export function parseQuickCaptureInput(
   const appliedTags: string[] = [];
 
   for (const token of tokens) {
-    if (token === '/wait') {
+    if (token === '/wait' || token.toLowerCase() === 'waiting') {
       status = 'waiting';
-      appliedTags.push('/wait');
+      appliedTags.push(token);
       continue;
     }
 
     if (options.allowGtdCommands && token in GTD_COMMANDS && !options.lockGtdCategory) {
       gtdCategory = GTD_COMMANDS[token];
       appliedTags.push(token);
+      continue;
+    }
+
+    if (token === '今日') {
+      detectedDate = formatDateKey(now);
+      appliedTags.push('今日');
       continue;
     }
 
