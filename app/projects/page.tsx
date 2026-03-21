@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { FormEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useProjects } from '@/lib/hooks/use-projects';
+import { useTasks } from '@/lib/hooks/use-tasks';
 import type { CreateProjectInput, Project } from '@/lib/domain/project';
 import { AlertStrip, type AlertStripItem } from '@/components/ui/alert-strip';
 import { ExportActions } from '@/components/ui/export-actions';
@@ -11,6 +12,8 @@ import { formatDate, formatProjectDisplayName } from '@/lib/tasks/presentation';
 import {
   PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
   PROJECT_NO_NEXT_ACTION_DETAIL,
+  buildProjectRelationshipIssue,
+  getTaskMap,
 } from '@/lib/tasks/relationships';
 import { buildHistoryRows, buildProjectExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
@@ -130,6 +133,7 @@ function statusLabel(status: Project['status'] | undefined): string {
 
 export default function ProjectsPage() {
   const { projects, isLoading, error, createProject, deleteProject } = useProjects();
+  const { tasks, error: tasksError } = useTasks();
   const [sortKey, setSortKey] = useState<ProjectSortKey>('created_desc');
   const [searchQuery, setSearchQuery] = useState('');
   const deferredSearchQuery = useDeferredValue(searchQuery);
@@ -154,8 +158,9 @@ export default function ProjectsPage() {
 
   const visibleProjects = useMemo(() => filteredAndSortedProjects.slice(0, projectRenderCount), [filteredAndSortedProjects, projectRenderCount]);
   const focusedProjects = useMemo(() => buildProjectFocusDeck(filteredAndSortedProjects, 3), [filteredAndSortedProjects]);
-  const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(filteredAndSortedProjects), [filteredAndSortedProjects]);
-  const stalledProjects = useMemo(() => buildStalledProjectList(filteredAndSortedProjects, 4), [filteredAndSortedProjects]);
+  const taskMap = useMemo(() => getTaskMap(tasks), [tasks]);
+  const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(filteredAndSortedProjects, tasks, taskMap), [filteredAndSortedProjects, taskMap, tasks]);
+  const stalledProjects = useMemo(() => buildStalledProjectList(filteredAndSortedProjects, 4, tasks, taskMap), [filteredAndSortedProjects, taskMap, tasks]);
   const hiddenProjectCount = Math.max(filteredAndSortedProjects.length - visibleProjects.length, 0);
 
   const missingDueProjects = useMemo(() => {
@@ -176,6 +181,25 @@ export default function ProjectsPage() {
       (project) => project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done',
     );
   }, [filteredAndSortedProjects]);
+
+  const projectsWithoutNextCandidates = useMemo(() => {
+    return filteredAndSortedProjects.filter((project) =>
+      buildProjectRelationshipIssue(project, tasks, taskMap)?.reason === 'この後候補なし',
+    );
+  }, [filteredAndSortedProjects, taskMap, tasks]);
+
+  const projectsWithBrokenNextCandidates = useMemo(() => {
+    return filteredAndSortedProjects.filter((project) =>
+      buildProjectRelationshipIssue(project, tasks, taskMap)?.reason === '候補リンク切れ',
+    );
+  }, [filteredAndSortedProjects, taskMap, tasks]);
+
+  const projectRelationshipIssues = useMemo(() => {
+    return filteredAndSortedProjects.reduce<Record<string, ReturnType<typeof buildProjectRelationshipIssue>>>((acc, project) => {
+      acc[project.id] = buildProjectRelationshipIssue(project, tasks, taskMap);
+      return acc;
+    }, {});
+  }, [filteredAndSortedProjects, taskMap, tasks]);
 
   const projectAlertItems = useMemo(() => {
     const items: AlertStripItem[] = [];
@@ -222,8 +246,30 @@ export default function ProjectsPage() {
       });
     }
 
+    if (projectsWithoutNextCandidates.length > 0) {
+      items.push({
+        id: 'no-next-candidates',
+        label: 'この後候補なし',
+        count: `${projectsWithoutNextCandidates.length}件`,
+        tone: 'info',
+        description: '関連タスクはあるが、「この後に見る候補」がまだ未設定です。',
+        href: '#no-next-candidate-projects',
+      });
+    }
+
+    if (projectsWithBrokenNextCandidates.length > 0) {
+      items.push({
+        id: 'broken-next-candidates',
+        label: '候補リンク切れ',
+        count: `${projectsWithBrokenNextCandidates.length}件`,
+        tone: 'warning',
+        description: '「この後に見る候補」が削除済み、または不正な project です。',
+        href: '#broken-next-candidate-projects',
+      });
+    }
+
     return items;
-  }, [missingDueProjects.length, missingStartProjects.length, projectsWithoutActions.length, projectsWithoutActiveActions.length]);
+  }, [missingDueProjects.length, missingStartProjects.length, projectsWithBrokenNextCandidates.length, projectsWithoutActions.length, projectsWithoutActiveActions.length, projectsWithoutNextCandidates.length]);
 
   const stats = useMemo(() => {
     const visibleProjectCount = filteredAndSortedProjects.length;
@@ -531,6 +577,76 @@ export default function ProjectsPage() {
           </details>
 
 
+          <details id="no-next-candidate-projects" className="group rounded-2xl border border-cyan-200 bg-cyan-50/40 p-5 shadow-sm">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden [&::-webkit-details-marker]:hidden">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">この後候補なし</h2>
+                <p className="mt-1 text-sm text-slate-600">進める一手はあるものの、「この後に見る候補」がまだ未設定の project です。</p>
+              </div>
+              <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] text-cyan-700">{projectsWithoutNextCandidates.length}件</span>
+            </summary>
+
+            {projectsWithoutNextCandidates.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-400">該当なし</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {projectsWithoutNextCandidates.map((project) => (
+                  <Link
+                    key={project.id}
+                    href={`/projects/${project.id}`}
+                    className="block rounded-xl border border-cyan-200 bg-white px-4 py-3 text-sm transition hover:bg-cyan-50/60"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-slate-900">{formatProjectDisplayName(project.title)}</div>
+                        <div className="mt-1 text-xs text-cyan-700">関連タスクはあるが、終わった後に見る候補がまだありません</div>
+                      </div>
+                      <span className="rounded-full bg-cyan-100 px-2 py-1 text-[11px] font-medium text-cyan-700">要確認</span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">
+                      {statusLabel(project.status)} / 関連タスク {project.linkedTaskCount}件 / 進める一手 {project.nextActionCount}件
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </details>
+
+          <details id="broken-next-candidate-projects" className="group rounded-2xl border border-rose-200 bg-rose-50/40 p-5 shadow-sm">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden [&::-webkit-details-marker]:hidden">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">候補リンク切れ</h2>
+                <p className="mt-1 text-sm text-slate-600">「この後に見る候補」が削除済み、または不正な project です。</p>
+              </div>
+              <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] text-rose-700">{projectsWithBrokenNextCandidates.length}件</span>
+            </summary>
+
+            {projectsWithBrokenNextCandidates.length === 0 ? (
+              <p className="mt-4 text-sm text-slate-400">該当なし</p>
+            ) : (
+              <div className="mt-4 space-y-2">
+                {projectsWithBrokenNextCandidates.map((project) => (
+                  <Link
+                    key={project.id}
+                    href={`/projects/${project.id}`}
+                    className="block rounded-xl border border-rose-200 bg-white px-4 py-3 text-sm transition hover:bg-rose-50/60"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-slate-900">{formatProjectDisplayName(project.title)}</div>
+                        <div className="mt-1 text-xs text-rose-700">{projectRelationshipIssues[project.id]?.detail ?? '「この後に見る候補」を見直したい状態です'}</div>
+                      </div>
+                      <span className="rounded-full bg-rose-100 px-2 py-1 text-[11px] font-medium text-rose-700">要確認</span>
+                    </div>
+                    <div className="mt-2 text-xs text-slate-500">
+                      {statusLabel(project.status)} / 関連タスク {project.linkedTaskCount}件 / 進める一手 {project.nextActionCount}件
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </details>
+
           <details id="no-action-projects" className="group rounded-2xl border border-amber-200 bg-amber-50/40 p-5 shadow-sm">
             <summary className="flex cursor-pointer list-none items-center justify-between gap-3 marker:hidden [&::-webkit-details-marker]:hidden">
               <div>
@@ -596,9 +712,9 @@ export default function ProjectsPage() {
             )}
           </details>
 
-          {pageError || error ? (
+          {pageError || error || tasksError ? (
             <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-              {pageError ?? error}
+              {pageError ?? error ?? tasksError}
             </p>
           ) : null}
 
@@ -684,6 +800,8 @@ export default function ProjectsPage() {
                     <RiskChip label="期限未設定" count={stalledProjectBuckets.noDueDate.length} />
                     <RiskChip label="次アクション未設定" count={stalledProjectBuckets.noActions.length} />
                     <RiskChip label="進める一手なし" count={stalledProjectBuckets.noActiveActions.length} />
+                    <RiskChip label="この後候補なし" count={stalledProjectBuckets.noNextCandidate.length} />
+                    <RiskChip label="候補リンク切れ" count={stalledProjectBuckets.brokenNextCandidate.length} />
                   </div>
                   <div className="mt-2 space-y-2">
                     {stalledProjects.length === 0 ? (
@@ -715,10 +833,22 @@ export default function ProjectsPage() {
             ) : (
               <>
                 <div className="mt-4 grid gap-4 xl:grid-cols-2">
-                {visibleProjects.map((project) => (
+                {visibleProjects.map((project) => {
+                  const relationIssue = projectRelationshipIssues[project.id];
+                  const borderClass = project.linkedTaskCount === 0
+                    ? 'border-amber-200 ring-1 ring-amber-100'
+                    : project.nextActionCount === 0 && project.status !== 'done'
+                      ? 'border-sky-200 ring-1 ring-sky-100'
+                      : relationIssue?.reason === 'この後候補なし'
+                        ? 'border-cyan-200 ring-1 ring-cyan-100'
+                        : relationIssue?.reason === '候補リンク切れ'
+                          ? 'border-rose-200 ring-1 ring-rose-100'
+                          : 'border-slate-200 hover:border-slate-300';
+
+                  return (
                   <article
                     key={project.id}
-                    className={`rounded-2xl border bg-white p-5 shadow-sm transition hover:bg-slate-50/60 ${project.linkedTaskCount === 0 ? 'border-amber-200 ring-1 ring-amber-100' : project.nextActionCount === 0 && project.status !== 'done' ? 'border-sky-200 ring-1 ring-sky-100' : 'border-slate-200 hover:border-slate-300'}`}
+                    className={`rounded-2xl border bg-white p-5 shadow-sm transition hover:bg-slate-50/60 ${borderClass}`}
                   >
                     <Link
                       href={`/projects/${project.id}`}
@@ -745,6 +875,14 @@ export default function ProjectsPage() {
                             <span className="rounded-full bg-sky-100 px-2.5 py-1 text-[11px] font-medium text-sky-700">
                               進める一手なし
                             </span>
+                          ) : relationIssue?.reason === 'この後候補なし' ? (
+                            <span className="rounded-full bg-cyan-100 px-2.5 py-1 text-[11px] font-medium text-cyan-700">
+                              この後候補なし
+                            </span>
+                          ) : relationIssue?.reason === '候補リンク切れ' ? (
+                            <span className="rounded-full bg-rose-100 px-2.5 py-1 text-[11px] font-medium text-rose-700">
+                              候補リンク切れ
+                            </span>
                           ) : null}
                         </div>
                       </div>
@@ -762,6 +900,8 @@ export default function ProjectsPage() {
                         <InfoChip label="状態" value={statusLabel(project.status)} />
                         {project.linkedTaskCount === 0 ? <InfoChip label="要確認" value="次アクション未設定" warning /> : null}
                         {project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done' ? <InfoChip label="要確認" value="進める一手なし" /> : null}
+                        {relationIssue?.reason === 'この後候補なし' ? <InfoChip label="要確認" value="この後候補なし" /> : null}
+                        {relationIssue?.reason === '候補リンク切れ' ? <InfoChip label="要確認" value="候補リンク切れ" danger /> : null}
                         <InfoChip label="進める一手" value={`${project.nextActionCount}件`} />
                         <InfoChip label="関連タスク" value={`${project.linkedTaskCount}件`} />
                         <InfoChip label="完了" value={`${project.doneCount}件`} />
@@ -777,6 +917,8 @@ export default function ProjectsPage() {
                         {!project.dueDate ? <FilterChip label="期限未設定" /> : null}
                         {project.linkedTaskCount === 0 ? <FilterChip label="次アクション未設定" subtle /> : null}
                         {project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done' ? <FilterChip label="進める一手なし" subtle /> : null}
+                        {relationIssue?.reason === 'この後候補なし' ? <FilterChip label="この後候補なし" subtle /> : null}
+                        {relationIssue?.reason === '候補リンク切れ' ? <FilterChip label="候補リンク切れ" subtle /> : null}
                       </div>
                     </Link>
 
@@ -790,7 +932,8 @@ export default function ProjectsPage() {
                       </button>
                     </div>
                   </article>
-                ))}
+                  );
+                })}
               </div>
 
 

@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useDeferredValue, useEffect, useMemo, useState } from 'react';
 import { useProjects } from '@/lib/hooks/use-projects';
+import { useTasks } from '@/lib/hooks/use-tasks';
 import type { Project } from '@/lib/domain/project';
 import { AlertStrip, type AlertStripItem } from '@/components/ui/alert-strip';
 import { ExportActions } from '@/components/ui/export-actions';
@@ -15,7 +16,12 @@ import {
   formatRelativeDueText,
   parseDateOnly,
 } from '@/lib/tasks/presentation';
-import { PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL, PROJECT_NO_NEXT_ACTION_DETAIL } from '@/lib/tasks/relationships';
+import {
+  PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL,
+  PROJECT_NO_NEXT_ACTION_DETAIL,
+  buildProjectRelationshipIssue,
+  getTaskMap,
+} from '@/lib/tasks/relationships';
 import { buildHistoryRows, buildProjectExportRows, downloadCsv, downloadJson } from '@/lib/tasks/export';
 import { useTaskHistory } from '@/lib/tasks/history';
 import { buildProjectFocusDeck, buildProjectStalledBuckets, buildStalledProjectList } from '@/lib/tasks/focus';
@@ -36,7 +42,7 @@ function isViewerEligible(project: Project) {
   return Boolean(project.startedAt && project.dueDate);
 }
 
-function projectMatchesFilter(project: Project, filterKey: ViewerFilterKey) {
+function projectMatchesFilter(project: Project, filterKey: ViewerFilterKey, relationIssue: ReturnType<typeof buildProjectRelationshipIssue> | null) {
   const dueDiff = dayDiffFromToday(project.dueDate);
 
   switch (filterKey) {
@@ -46,7 +52,9 @@ function projectMatchesFilter(project: Project, filterKey: ViewerFilterKey) {
         !project.startedAt ||
         !project.dueDate ||
         project.linkedTaskCount === 0 ||
-        (project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done')
+        (project.linkedTaskCount > 0 && project.nextActionCount === 0 && project.status !== 'done') ||
+        relationIssue?.reason === 'この後候補なし' ||
+        relationIssue?.reason === '候補リンク切れ'
       );
     case 'active':
       return project.status === 'doing' || (project.linkedTaskCount > 0 && project.completionRate < 100);
@@ -104,7 +112,11 @@ function getBarStyle(project: Project, timelineDays: Date[]) {
   };
 }
 
-function buildViewerAlerts(projects: Project[]) {
+function buildViewerAlerts(
+  projects: Project[],
+  projectsWithoutNextCandidates: Project[],
+  projectsWithBrokenNextCandidates: Project[],
+) {
   const missingStart = projects.filter((project) => !project.startedAt).length;
   const missingDue = projects.filter((project) => !project.dueDate).length;
   const noActions = projects.filter((project) => project.linkedTaskCount === 0).length;
@@ -130,24 +142,51 @@ function buildViewerAlerts(projects: Project[]) {
   if (noActiveActions > 0) {
     items.push({ id: 'no-active-actions', label: '進める一手なし', count: `${noActiveActions}件`, tone: 'info', description: PROJECT_NO_ACTIVE_NEXT_ACTION_DETAIL });
   }
+  if (projectsWithoutNextCandidates.length > 0) {
+    items.push({
+      id: 'no-next-candidate',
+      label: 'この後候補なし',
+      count: `${projectsWithoutNextCandidates.length}件`,
+      tone: 'info',
+      description: '関連タスクはあるが、「この後に見る候補」がまだ未設定です。',
+    });
+  }
+  if (projectsWithBrokenNextCandidates.length > 0) {
+    items.push({
+      id: 'broken-next-candidate',
+      label: '候補リンク切れ',
+      count: `${projectsWithBrokenNextCandidates.length}件`,
+      tone: 'warning',
+      description: '「この後に見る候補」が削除済み、または不正です。',
+    });
+  }
 
   return items;
 }
 
 export default function ProjectsViewerPage() {
   const { projects, isLoading, error } = useProjects();
+  const { tasks, error: tasksError } = useTasks();
   const [searchQuery, setSearchQuery] = useState('');
   const [filterKey, setFilterKey] = useState<ViewerFilterKey>('all');
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const [viewerRenderCount, setViewerRenderCount] = useState(40);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
+  const taskMap = useMemo(() => getTaskMap(tasks), [tasks]);
+  const projectRelationshipIssues = useMemo(() => {
+    return projects.reduce<Record<string, ReturnType<typeof buildProjectRelationshipIssue>>>((acc, project) => {
+      acc[project.id] = buildProjectRelationshipIssue(project, tasks, taskMap);
+      return acc;
+    }, {});
+  }, [projects, taskMap, tasks]);
+
   const filteredProjects = useMemo(() => {
     const normalizedQuery = deferredSearchQuery.trim().toLowerCase();
 
     return projects
       .filter((project) => {
-        if (!projectMatchesFilter(project, filterKey)) return false;
+        if (!projectMatchesFilter(project, filterKey, projectRelationshipIssues[project.id])) return false;
         if (!normalizedQuery) return true;
         return `${formatProjectDisplayName(project.title)} ${project.description ?? ''}`.toLowerCase().includes(normalizedQuery);
       })
@@ -156,7 +195,7 @@ export default function ProjectsViewerPage() {
         if (right.completionRate !== left.completionRate) return right.completionRate - left.completionRate;
         return right.createdAt.localeCompare(left.createdAt);
       });
-  }, [deferredSearchQuery, filterKey, projects]);
+  }, [deferredSearchQuery, filterKey, projectRelationshipIssues, projects]);
 
   const ganttProjects = useMemo(
     () => filteredProjects.filter((project) => isViewerEligible(project)),
@@ -166,8 +205,8 @@ export default function ProjectsViewerPage() {
   const visibleGanttProjects = useMemo(() => ganttProjects.slice(0, viewerRenderCount), [ganttProjects, viewerRenderCount]);
   const hiddenGanttProjectCount = Math.max(ganttProjects.length - visibleGanttProjects.length, 0);
   const focusedProjects = useMemo(() => buildProjectFocusDeck(filteredProjects, 3), [filteredProjects]);
-  const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(filteredProjects), [filteredProjects]);
-  const stalledProjects = useMemo(() => buildStalledProjectList(filteredProjects, 4), [filteredProjects]);
+  const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(filteredProjects, tasks, taskMap), [filteredProjects, taskMap, tasks]);
+  const stalledProjects = useMemo(() => buildStalledProjectList(filteredProjects, 4, tasks, taskMap), [filteredProjects, taskMap, tasks]);
 
   const missingStartProjects = useMemo(
     () => filteredProjects.filter((project) => !project.startedAt),
@@ -179,7 +218,10 @@ export default function ProjectsViewerPage() {
     [filteredProjects],
   );
 
-  const alerts = useMemo(() => buildViewerAlerts(filteredProjects), [filteredProjects]);
+  const projectsWithoutNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === 'この後候補なし'), [filteredProjects, projectRelationshipIssues]);
+  const projectsWithBrokenNextCandidates = useMemo(() => filteredProjects.filter((project) => projectRelationshipIssues[project.id]?.reason === '候補リンク切れ'), [filteredProjects, projectRelationshipIssues]);
+
+  const alerts = useMemo(() => buildViewerAlerts(filteredProjects, projectsWithoutNextCandidates, projectsWithBrokenNextCandidates), [filteredProjects, projectsWithBrokenNextCandidates, projectsWithoutNextCandidates]);
   const timelineDays = useMemo(() => buildTimelineDays(ganttProjects), [ganttProjects]);
   const totalTimelineWidth = timelineDays.length * DAY_WIDTH;
   const todayIndex = useMemo(() => {
@@ -305,8 +347,8 @@ export default function ProjectsViewerPage() {
         </div>
       </header>
 
-      {error ? (
-        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p>
+      {error || tasksError ? (
+        <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error ?? tasksError}</p>
       ) : null}
 
 
@@ -345,6 +387,8 @@ export default function ProjectsViewerPage() {
               <RiskChip label="期限未設定" count={stalledProjectBuckets.noDueDate.length} />
               <RiskChip label="次アクション未設定" count={stalledProjectBuckets.noActions.length} />
               <RiskChip label="進める一手なし" count={stalledProjectBuckets.noActiveActions.length} />
+              <RiskChip label="この後候補なし" count={stalledProjectBuckets.noNextCandidate.length} />
+              <RiskChip label="候補リンク切れ" count={stalledProjectBuckets.brokenNextCandidate.length} />
             </div>
             <div className="mt-2 space-y-2">
               {stalledProjects.length === 0 ? (
