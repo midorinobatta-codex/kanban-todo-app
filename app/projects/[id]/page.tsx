@@ -60,6 +60,7 @@ import {
   getTaskMap,
   hasBrokenNextCandidate,
 } from '@/lib/tasks/relationships';
+import { buildNextActionSuggestions, type NextActionSuggestion } from '@/lib/tasks/next-action-ai';
 
 const levelClassName = {
   low: 'bg-emerald-100 text-emerald-700',
@@ -116,6 +117,9 @@ export default function ProjectDetailPage() {
   const [bulkWaitingResponseDate, setBulkWaitingResponseDate] = useState('');
   const [expandedTaskSectionKeys, setExpandedTaskSectionKeys] = useState<Record<string, boolean>>({});
   const [pageNotice, setPageNotice] = useState<string | null>(null);
+  const [showAiSuggestions, setShowAiSuggestions] = useState(false);
+  const [aiSuggestions, setAiSuggestions] = useState<NextActionSuggestion[]>([]);
+  const [suggestionDrafts, setSuggestionDrafts] = useState<Record<string, string>>({});
   const newActionTitleInputRef = useRef<HTMLInputElement | null>(null);
   const { entries: historyEntries, append: appendHistoryEntry, clear: clearHistoryEntries } = useTaskHistory();
 
@@ -295,6 +299,10 @@ export default function ProjectDetailPage() {
 
   const stalledLinkedTaskBuckets = useMemo(() => buildTaskStalledBuckets(sortedLinkedTasks, detailTaskMap), [detailTaskMap, sortedLinkedTasks]);
   const stalledLinkedTasks = useMemo(() => buildStalledTaskList(sortedLinkedTasks, 4, detailTaskMap), [detailTaskMap, sortedLinkedTasks]);
+  const generatedNextActionSuggestions = useMemo(
+    () => (project ? buildNextActionSuggestions(project, linkedTasks) : []),
+    [linkedTasks, project],
+  );
 
   const toggleTaskSectionExpanded = useCallback((key: string) => {
     setExpandedTaskSectionKeys((prev) => ({ ...prev, [key]: !prev[key] }));
@@ -583,6 +591,63 @@ export default function ProjectDetailPage() {
       setSavingQuickAction(false);
     },
     [appendHistoryEntry, project, quickActionInput],
+  );
+
+  const openAiSuggestions = useCallback(() => {
+    setAiSuggestions(generatedNextActionSuggestions);
+    setSuggestionDrafts(
+      generatedNextActionSuggestions.reduce<Record<string, string>>((acc, suggestion) => {
+        acc[suggestion.title] = suggestion.title;
+        return acc;
+      }, {}),
+    );
+    setShowAiSuggestions(true);
+  }, [generatedNextActionSuggestions]);
+
+  const adoptAiSuggestion = useCallback(
+    async (suggestion: NextActionSuggestion) => {
+      if (!project) return;
+
+      const title = (suggestionDrafts[suggestion.title] ?? suggestion.title).trim();
+      if (!title) return;
+
+      setSavingAction(true);
+      setPageNotice(null);
+
+      const { data, error: insertError } = await getSupabaseClient()
+        .from('tasks')
+        .insert({
+          user_id: project.user_id,
+          title,
+          description: null,
+          assignee: '自分',
+          priority: 'medium',
+          importance: 'medium',
+          urgency: 'medium',
+          status: 'todo',
+          gtd_category: 'next_action',
+          project_task_id: project.id,
+        })
+        .select('*')
+        .single();
+
+      if (insertError) {
+        setPageNotice(insertError.message);
+        setSavingAction(false);
+        return;
+      }
+
+      setLinkedTasks((prev) => [data as Task, ...prev]);
+      setAiSuggestions((prev) => prev.filter((item) => item.title !== suggestion.title));
+      setSuggestionDrafts((prev) => {
+        const next = { ...prev };
+        delete next[suggestion.title];
+        return next;
+      });
+      setPageNotice(`AI候補「${title}」を次アクションに追加しました。`);
+      setSavingAction(false);
+    },
+    [project, suggestionDrafts],
   );
 
   async function handleUpdateLinkedTaskStatus(task: Task, nextStatus: TaskProgress) {
@@ -1056,6 +1121,18 @@ export default function ProjectDetailPage() {
                 Viewer
               </Link>
               <Link
+                href="/waiting"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Waiting
+              </Link>
+              <Link
+                href="/inbox"
+                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+              >
+                Clarify
+              </Link>
+              <Link
                 href="/projects"
                 className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
               >
@@ -1088,6 +1165,76 @@ export default function ProjectDetailPage() {
           {pageNotice}
         </p>
       ) : null}
+
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">AIで次アクション候補</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              project description・既存 task・止まり気味の task から 2〜5 件の候補を出します。自動確定はせず、採用・編集・却下だけを素早く行えます。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={openAiSuggestions}
+            className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-slate-800"
+          >
+            次アクション候補を提案
+          </button>
+        </div>
+
+        {showAiSuggestions ? (
+          <div className="mt-4 grid gap-3">
+            {aiSuggestions.length === 0 ? (
+              <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                候補を作れませんでした。通常のクイック追加はそのまま使えます。
+              </div>
+            ) : (
+              aiSuggestions.map((suggestion) => (
+                <div key={suggestion.title} className="rounded-xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900">{suggestion.title}</div>
+                      <div className="mt-1 text-xs text-slate-600">{suggestion.reason}</div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAiSuggestions((prev) => prev.filter((item) => item.title !== suggestion.title));
+                        setSuggestionDrafts((prev) => {
+                          const next = { ...prev };
+                          delete next[suggestion.title];
+                          return next;
+                        });
+                      }}
+                      className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100"
+                    >
+                      却下
+                    </button>
+                  </div>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <input
+                      value={suggestionDrafts[suggestion.title] ?? suggestion.title}
+                      onChange={(event) =>
+                        setSuggestionDrafts((prev) => ({ ...prev, [suggestion.title]: event.target.value }))
+                      }
+                      className="flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void adoptAiSuggestion(suggestion)}
+                      disabled={savingAction}
+                      className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500 disabled:opacity-60"
+                    >
+                      採用して task 化
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
+      </section>
 
       <AlertStrip items={projectAlertItems} title="通知 / 警告" compact defaultCollapsed />
 

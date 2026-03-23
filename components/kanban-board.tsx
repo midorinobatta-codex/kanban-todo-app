@@ -85,6 +85,7 @@ import {
 } from '@/lib/tasks/relationships';
 import { compareTasksByDuePriority } from '@/lib/tasks/task-ordering';
 import { getTaskTemplatePeriodKey, shouldGenerateTaskTemplateForDate } from '@/lib/tasks/task-templates';
+import { buildClarifyQueue } from '@/lib/tasks/clarify';
 
 const BOARD_PREFERENCES_KEY = 'kanban-board-preferences-v2';
 const DAILY_REVIEW_NOTE_KEY_PREFIX = 'flowfocus-daily-review-note-';
@@ -1410,6 +1411,7 @@ export function KanbanBoard({
 
   const stalledTaskBuckets = useMemo(() => buildTaskStalledBuckets(visibleTasksForNormalViews, taskMap), [taskMap, visibleTasksForNormalViews]);
   const stalledTasks = useMemo(() => buildStalledTaskList(visibleTasksForNormalViews, 4, taskMap), [taskMap, visibleTasksForNormalViews]);
+  const clarifyQueue = useMemo(() => buildClarifyQueue(tasks), [tasks]);
   const reviewTaskQueue = useMemo(() => buildOneMinuteReviewTaskList(visibleTasksForNormalViews, 12, taskMap), [taskMap, visibleTasksForNormalViews]);
   const stalledProjectBuckets = useMemo(() => buildProjectStalledBuckets(projects, tasks, taskMap), [projects, taskMap, tasks]);
   const reviewProjects = useMemo(() => buildOneMinuteReviewProjectList(projects, 8, tasks, taskMap), [projects, taskMap, tasks]);
@@ -2581,6 +2583,18 @@ export function KanbanBoard({
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
+            <Link
+              href="/inbox"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Clarify {clarifyQueue.length > 0 ? `(${clarifyQueue.length})` : ''}
+            </Link>
+            <Link
+              href="/waiting"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Waiting
+            </Link>
             <Link
               href="/projects"
               className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
