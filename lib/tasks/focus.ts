@@ -9,13 +9,13 @@ import {
 } from '@/lib/tasks/relationships';
 import type { Task } from '@/lib/types';
 import {
+  businessDayDiffFromToday,
   formatRelativeDueText,
   isDueToday,
   isOverdue,
   isWaitingResponseOverdue,
   isWaitingResponseToday,
   isWaitingWithoutResponseDate,
-  startOfToday,
 } from '@/lib/tasks/presentation';
 
 export type FocusTaskItem = {
@@ -69,18 +69,13 @@ export type StalledProjectItem = {
   score: number;
 };
 
-function daysFromTimestamp(value: string | null | undefined) {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  const today = startOfToday();
-  const target = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
-  return Math.round((today.getTime() - target.getTime()) / (1000 * 60 * 60 * 24));
+function doingStaleBusinessDaysFromTask(task: Task) {
+  return businessDayDiffFromToday(task.updated_at) ?? businessDayDiffFromToday(task.created_at);
 }
 
 export function isDoingStale(task: Task, staleDays = 3) {
   if (task.status !== 'doing') return false;
-  const sinceUpdated = daysFromTimestamp(task.updated_at) ?? daysFromTimestamp(task.created_at);
+  const sinceUpdated = doingStaleBusinessDaysFromTask(task);
   if (sinceUpdated === null) return false;
   return sinceUpdated >= staleDays;
 }
@@ -160,7 +155,7 @@ function buildTaskFocusEntry(task: Task): FocusTaskItem {
   }
 
   if (isDoingStale(task)) {
-    const days = daysFromTimestamp(task.updated_at) ?? 0;
+    const days = doingStaleBusinessDaysFromTask(task) ?? 0;
     return {
       task,
       reason: '進行停滞',
@@ -270,7 +265,7 @@ function buildStalledTaskEntry(task: Task, taskMap: Record<string, Task> = {}): 
     return { task, reason: '候補リンク切れ', detail: '「次候補」が削除済み、または不正です', tone: 'warning', score: 2 };
   }
   if (isDoingStale(task)) {
-    const days = daysFromTimestamp(task.updated_at) ?? 0;
+    const days = doingStaleBusinessDaysFromTask(task) ?? 0;
     return { task, reason: '進行停滞', detail: `${days}日更新なし`, tone: 'warning', score: 3 };
   }
   if ((task.status === 'todo' || task.status === 'doing') && isOverdue(task.due_date)) {
@@ -338,7 +333,7 @@ export function buildOneMinuteReviewTaskList(tasks: Task[], limit = 12, taskMap:
         return { task, reason: 'Waiting期限超過', detail: `回答予定 ${formatRelativeDueText(task.waiting_response_date)}`, tone: 'danger' as const, score: 0 };
       }
       if (isDoingStale(task)) {
-        const days = daysFromTimestamp(task.updated_at) ?? 0;
+        const days = doingStaleBusinessDaysFromTask(task) ?? 0;
         return { task, reason: '停滞中', detail: `${days}日更新なし`, tone: 'warning' as const, score: 1 };
       }
       if ((task.status === 'todo' || task.status === 'doing') && isOverdue(task.due_date)) {

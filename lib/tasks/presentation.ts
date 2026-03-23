@@ -84,6 +84,29 @@ export function dayDiffFromToday(value: string | null | undefined) {
   return Math.round(diff / (1000 * 60 * 60 * 24));
 }
 
+
+export function businessDayDiffFromToday(value: string | null | undefined) {
+  const date = parseDateOnly(value);
+  if (!date) return null;
+
+  const today = startOfToday();
+  if (date.getTime() === today.getTime()) return 0;
+
+  const forward = date < today;
+  const cursor = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  let businessDays = 0;
+
+  while (cursor.getTime() !== today.getTime()) {
+    cursor.setDate(cursor.getDate() + (forward ? 1 : -1));
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) {
+      businessDays += 1;
+    }
+  }
+
+  return forward ? businessDays : -businessDays;
+}
+
 export function isOverdue(dueDate: string | null | undefined) {
   const due = parseDateOnly(dueDate);
   if (!due) return false;
