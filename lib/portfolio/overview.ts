@@ -2,6 +2,7 @@ import type { Project } from '@/lib/domain/project';
 import { isOverdue, isWaitingResponseOverdue } from '@/lib/tasks/presentation';
 import type { Task, WaitingLink } from '@/lib/types';
 import { buildProjectRelationshipIssue } from '@/lib/tasks/relationships';
+import { buildWaitingTaskSignal } from '@/lib/waiting-links/overview';
 
 export type PortfolioReason =
   | '回答超過'
@@ -12,6 +13,8 @@ export type PortfolioReason =
   | '候補リンク切れ'
   | '返信あり未確認'
   | '相手から質問あり'
+  | 'リンク未発行'
+  | '完了返答未処理'
   | 'waiting 日付未設定';
 
 export type PortfolioRow = {
@@ -73,16 +76,22 @@ export function buildPortfolioOverview(projects: Project[], tasks: Task[], waiti
 
     let unreadResponses = 0;
     let questionResponses = 0;
+    let missingLinks = 0;
+    let completedButWaiting = 0;
 
     for (const task of projectTasks) {
       const link = latestLinkByTaskId.get(task.id);
-      if (!link) continue;
-      if (link.has_unread_response) unreadResponses += 1;
-      if (link.latest_response_status === 'has_question') questionResponses += 1;
+      const signal = buildWaitingTaskSignal(task, link);
+      if (signal.hasUnreadResponse) unreadResponses += 1;
+      if (signal.hasQuestion) questionResponses += 1;
+      if (signal.isLinkMissing) missingLinks += 1;
+      if (signal.hasCompletedResponse && task.status === 'waiting') completedButWaiting += 1;
     }
 
     if (unreadResponses > 0) reasons.push('返信あり未確認');
     if (questionResponses > 0) reasons.push('相手から質問あり');
+    if (missingLinks > 0) reasons.push('リンク未発行');
+    if (completedButWaiting > 0) reasons.push('完了返答未処理');
 
     const relationIssue = buildProjectRelationshipIssue(project, tasks, Object.fromEntries(tasks.map((task) => [task.id, task])));
     if (relationIssue?.reason.includes('候補')) reasons.push('候補リンク切れ');
@@ -95,6 +104,8 @@ export function buildPortfolioOverview(projects: Project[], tasks: Task[], waiti
       Number(noNextAction) * 3 +
       unreadResponses +
       questionResponses * 2 +
+      missingLinks +
+      completedButWaiting +
       waitingNoDateCount;
 
     const signal: PortfolioRow['signal'] = score >= 7 ? 'risk' : score >= 2 ? 'watch' : 'on_track';
@@ -130,6 +141,9 @@ export function buildPortfolioOverview(projects: Project[], tasks: Task[], waiti
       if (!row.latestUpdatedAt) return true;
       return Date.now() - new Date(row.latestUpdatedAt).getTime() > 1000 * 60 * 60 * 24 * 7;
     }).length,
+    waitingUnreadCount: rows.filter((row) => row.reasons.includes('返信あり未確認')).length,
+    waitingQuestionCount: rows.filter((row) => row.reasons.includes('相手から質問あり')).length,
+    waitingLinkMissingCount: rows.filter((row) => row.reasons.includes('リンク未発行')).length,
   };
 
   return {

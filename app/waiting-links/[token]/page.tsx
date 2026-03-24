@@ -27,6 +27,7 @@ export default function WaitingLinkPublicPage() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [done, setDone] = useState(false);
+  const [doneMessage, setDoneMessage] = useState('');
 
   const [status, setStatus] = useState<WaitingResponseStatus>('in_progress');
   const [responderName, setResponderName] = useState('');
@@ -37,6 +38,9 @@ export default function WaitingLinkPublicPage() {
     if (typeof err === 'object' && err !== null) {
       const { message, code } = err as SupabaseLikeError;
       const text = message?.toLowerCase() ?? '';
+      if (text.includes('invalid or expired')) {
+        return 'このリンクは無効化済み、または有効期限が切れています。依頼者へ再発行を依頼してください。';
+      }
       if (
         code === '42883' ||
         text.includes("function public.get_waiting_link_public") ||
@@ -97,6 +101,13 @@ export default function WaitingLinkPublicPage() {
       return;
     }
 
+    setDoneMessage(
+      status === 'completed'
+        ? '返信を送信しました。完了として依頼者へ通知されます。'
+        : status === 'has_question'
+          ? '返信を送信しました。質問ありとして依頼者へ通知されます。'
+          : '返信を送信しました。依頼者が Waiting 画面で確認できます。',
+    );
     setDone(true);
     setSaving(false);
   };
@@ -151,7 +162,7 @@ export default function WaitingLinkPublicPage() {
           </>
         ) : null}
 
-        {done ? <p className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">返信を送信しました。ありがとうございました。</p> : null}
+        {done ? <p className="mt-6 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{doneMessage}</p> : null}
       </section>
     </main>
   );

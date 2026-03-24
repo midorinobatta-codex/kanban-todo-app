@@ -310,6 +310,7 @@ create table if not exists public.waiting_links (
   latest_response_at timestamptz,
   latest_response_summary text,
   latest_response_status text,
+  latest_response_due_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -340,6 +341,7 @@ alter table public.waiting_links add column if not exists has_unread_response bo
 alter table public.waiting_links add column if not exists latest_response_at timestamptz;
 alter table public.waiting_links add column if not exists latest_response_summary text;
 alter table public.waiting_links add column if not exists latest_response_status text;
+alter table public.waiting_links add column if not exists latest_response_due_date date;
 
 alter table public.waiting_links drop constraint if exists waiting_links_mode_check;
 alter table public.waiting_links
@@ -410,7 +412,8 @@ begin
     has_unread_response = true,
     latest_response_at = inserted.created_at,
     latest_response_status = inserted.response_status,
-    latest_response_summary = left(coalesce(inserted.comment, ''), 120)
+    latest_response_summary = left(coalesce(inserted.comment, ''), 120),
+    latest_response_due_date = inserted.response_due_date
   where id = target_link.id;
 
   if inserted.response_due_date is not null then
