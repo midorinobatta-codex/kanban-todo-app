@@ -126,6 +126,7 @@ export default function InboxPage() {
             <p className="mt-1 text-sm text-slate-600">未整理タスクを 1 件ずつ軽く判断し、Board を重くせず前に進めます。</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Link href="/meeting-import" className="rounded-lg border border-violet-300 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100">会議メモ取込</Link>
             <Link href="/waiting" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Waiting</Link>
             <Link href="/" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50">Board</Link>
           </div>
