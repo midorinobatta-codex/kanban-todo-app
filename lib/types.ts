@@ -110,6 +110,48 @@ export type WorkSessionEntry = {
   updated_at: string;
 };
 
+export const WAITING_RESPONSE_STATUS_VALUES = ['not_started', 'in_progress', 'completed', 'on_hold', 'has_question'] as const;
+export type WaitingResponseStatus = (typeof WAITING_RESPONSE_STATUS_VALUES)[number];
+
+export const WAITING_RESPONSE_STATUS_LABELS: Record<WaitingResponseStatus, string> = {
+  not_started: '未着手',
+  in_progress: '対応中',
+  completed: '完了',
+  on_hold: '保留',
+  has_question: '確認したいことあり',
+};
+
+export type WaitingLink = {
+  id: string;
+  user_id: string;
+  task_id: string;
+  token: string;
+  mode: 'reply';
+  is_active: boolean;
+  expires_at: string | null;
+  requester_name: string | null;
+  task_title: string;
+  request_detail: string | null;
+  request_due_date: string | null;
+  has_unread_response: boolean;
+  latest_response_at: string | null;
+  latest_response_summary: string | null;
+  latest_response_status: WaitingResponseStatus | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type WaitingResponse = {
+  id: string;
+  waiting_link_id: string;
+  task_id: string;
+  responder_name: string | null;
+  response_status: WaitingResponseStatus;
+  response_due_date: string | null;
+  comment: string | null;
+  created_at: string;
+};
+
 // 互換用
 export type TaskStatus = TaskProgress;
 export const STATUS_ORDER = TASK_PROGRESS_ORDER;
