@@ -278,11 +278,19 @@ export default function WaitingPage() {
       setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、返信確認済みにできません。' });
       return;
     }
+    if (!link.has_unread_response) {
+      setTaskNotice(taskId, { type: 'success', message: 'この task の返信はすでに確認済みです。' });
+      return;
+    }
     startTaskAction(taskId, 'check');
 
     try {
       const supabase = getSupabaseClient();
-      const { error: updateError } = await supabase.from('waiting_links').update({ has_unread_response: false }).eq('id', link.id);
+      const { error: updateError } = await supabase
+        .from('waiting_links')
+        .update({ has_unread_response: false })
+        .eq('id', link.id)
+        .eq('has_unread_response', true);
       if (updateError) throw updateError;
       await loadWaitingContext();
       await reload();
@@ -409,7 +417,9 @@ export default function WaitingPage() {
                         <button type="button" disabled={isPending || Boolean(link)} onClick={() => void createOrReissueLink(task.id, false)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'create' ? '作成中...' : '返信リンク作成'}</button>
                         <button type="button" disabled={isPending || !link} onClick={() => void createOrReissueLink(task.id, true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'reissue' ? '再発行中...' : '再発行'}</button>
                         <button type="button" disabled={!link || isPending} onClick={() => void revokeLink(task.id)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">{pendingAction === 'revoke' ? '無効化中...' : '無効化'}</button>
-                        <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
+                        {signal.hasUnreadResponse ? (
+                          <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
+                        ) : null}
                         {link ? (
                           <button
                             type="button"
