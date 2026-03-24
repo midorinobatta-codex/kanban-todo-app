@@ -85,14 +85,19 @@ export default function WaitingPage() {
   const latestResponseByTaskId = useMemo(() => buildLatestWaitingResponseByTaskId(responses), [responses]);
   const activeLinkByTaskId = useMemo<LinkByTask>(() => Object.fromEntries(Array.from(buildActiveWaitingLinkByTaskId(links).entries())), [links]);
 
-  const hasUnreadResponseByTaskId = useCallback((taskId: string) => Boolean(activeLinkByTaskId[taskId]?.has_unread_response), [activeLinkByTaskId]);
+  const getTaskSignal = useCallback(
+    (taskId: string, task: (typeof tasks)[number]) => buildWaitingTaskSignal(task, activeLinkByTaskId[taskId], latestResponseByTaskId.get(taskId)),
+    [activeLinkByTaskId, latestResponseByTaskId, tasks],
+  );
+
+  const baseWaitingGroups = useMemo(() => buildWaitingGroups(tasks), [tasks]);
 
   const waitingGroups = useMemo(() => {
-    const groups = buildWaitingGroups(tasks).map((group) => ({
+    const groups = baseWaitingGroups.map((group) => ({
       ...group,
       items: [...group.items].sort((left, right) => {
-        const leftSignal = buildWaitingTaskSignal(left, activeLinkByTaskId[left.id], latestResponseByTaskId.get(left.id));
-        const rightSignal = buildWaitingTaskSignal(right, activeLinkByTaskId[right.id], latestResponseByTaskId.get(right.id));
+        const leftSignal = getTaskSignal(left.id, left);
+        const rightSignal = getTaskSignal(right.id, right);
         const scoreDiff = getWaitingTaskPriorityScore(right, rightSignal) - getWaitingTaskPriorityScore(left, leftSignal);
         if (scoreDiff !== 0) return scoreDiff;
         return new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
@@ -103,8 +108,8 @@ export default function WaitingPage() {
       .map((group) => ({
         ...group,
         items: group.items.filter((task) => {
-          const signal = buildWaitingTaskSignal(task, activeLinkByTaskId[task.id], latestResponseByTaskId.get(task.id));
-          if (waitingFilter === 'unread') return hasUnreadResponseByTaskId(task.id);
+          const signal = getTaskSignal(task.id, task);
+          if (waitingFilter === 'unread') return signal.hasUnreadResponse;
           if (waitingFilter === 'question') return signal.hasQuestion;
           if (waitingFilter === 'no_link') return signal.isLinkMissing;
           if (waitingFilter === 'overdue') return isWaitingResponseOverdue(task);
@@ -112,20 +117,20 @@ export default function WaitingPage() {
         }),
       }))
       .filter((group) => group.items.length > 0);
-  }, [activeLinkByTaskId, hasUnreadResponseByTaskId, latestResponseByTaskId, tasks, waitingFilter]);
+  }, [baseWaitingGroups, getTaskSignal, waitingFilter]);
 
-  const allWaiting = useMemo(() => waitingGroups.flatMap((group) => group.items), [waitingGroups]);
+  const allWaiting = useMemo(() => baseWaitingGroups.flatMap((group) => group.items), [baseWaitingGroups]);
 
   const summary = useMemo(
     () => ({
       overdue: allWaiting.filter((task) => isWaitingResponseOverdue(task)).length,
       noDate: allWaiting.filter((task) => isWaitingWithoutResponseDate(task)).length,
       noOwner: allWaiting.filter((task) => !task.assignee?.trim()).length,
-      unread: allWaiting.filter((task) => hasUnreadResponseByTaskId(task.id)).length,
-      questions: allWaiting.filter((task) => buildWaitingTaskSignal(task, activeLinkByTaskId[task.id], latestResponseByTaskId.get(task.id)).hasQuestion).length,
-      noLink: allWaiting.filter((task) => buildWaitingTaskSignal(task, activeLinkByTaskId[task.id], latestResponseByTaskId.get(task.id)).isLinkMissing).length,
+      unread: allWaiting.filter((task) => getTaskSignal(task.id, task).hasUnreadResponse).length,
+      questions: allWaiting.filter((task) => getTaskSignal(task.id, task).hasQuestion).length,
+      noLink: allWaiting.filter((task) => getTaskSignal(task.id, task).isLinkMissing).length,
     }),
-    [activeLinkByTaskId, allWaiting, hasUnreadResponseByTaskId, latestResponseByTaskId],
+    [allWaiting, getTaskSignal],
   );
 
   useEffect(() => {
@@ -280,7 +285,7 @@ export default function WaitingPage() {
       setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、返信確認済みにできません。' });
       return;
     }
-    if (!hasUnreadResponseByTaskId(taskId)) {
+    if (!link.has_unread_response) {
       setTaskNotice(taskId, { type: 'success', message: 'この task の返信はすでに確認済みです。' });
       return;
     }
@@ -374,8 +379,7 @@ export default function WaitingPage() {
                   const alertLevel = getWaitingAlertLevel(task);
                   const link = activeLinkByTaskId[task.id];
                   const latestResponse = latestResponseByTaskId.get(task.id);
-                  const signal = buildWaitingTaskSignal(task, link ?? null, latestResponse);
-                  const isUnreadResponse = hasUnreadResponseByTaskId(task.id);
+                  const signal = getTaskSignal(task.id, task);
                   const pendingAction = pendingActionByTaskId[task.id];
                   const taskNotice = noticeByTaskId[task.id];
                   const isPending = Boolean(pendingAction);
@@ -410,7 +414,7 @@ export default function WaitingPage() {
                           {isWaitingResponseOverdue(task) ? <span className="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-700">回答予定日超過</span> : null}
                           {!task.assignee?.trim() ? <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-700">相手未設定</span> : null}
                           {isWaitingWithoutResponseDate(task) ? <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-700">回答日未設定</span> : null}
-                          {isUnreadResponse ? <span className="rounded-full bg-sky-100 px-2 py-1 font-semibold text-sky-700">返信あり未確認</span> : null}
+                          {signal.hasUnreadResponse ? <span className="rounded-full bg-sky-100 px-2 py-1 font-semibold text-sky-700">返信あり未確認</span> : null}
                           {signal.hasQuestion ? <span className="rounded-full bg-violet-100 px-2 py-1 font-semibold text-violet-700">確認したいことあり</span> : null}
                           {signal.hasCompletedResponse ? <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-700">完了返答</span> : null}
                           {signal.isLinkMissing ? <span className="rounded-full bg-slate-200 px-2 py-1 font-semibold text-slate-700">リンク未発行</span> : null}
@@ -421,7 +425,7 @@ export default function WaitingPage() {
                         <button type="button" disabled={isPending || Boolean(link)} onClick={() => void createOrReissueLink(task.id, false)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'create' ? '作成中...' : '返信リンク作成'}</button>
                         <button type="button" disabled={isPending || !link} onClick={() => void createOrReissueLink(task.id, true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'reissue' ? '再発行中...' : '再発行'}</button>
                         <button type="button" disabled={!link || isPending} onClick={() => void revokeLink(task.id)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">{pendingAction === 'revoke' ? '無効化中...' : '無効化'}</button>
-                        {isUnreadResponse ? (
+                        {signal.hasUnreadResponse ? (
                           <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
                         ) : null}
                         {link ? (
