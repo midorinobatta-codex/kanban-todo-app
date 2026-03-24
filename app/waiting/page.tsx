@@ -34,6 +34,7 @@ export default function WaitingPage() {
   const [waitingFilter, setWaitingFilter] = useState<WaitingFilter>('all');
   const [pendingActionByTaskId, setPendingActionByTaskId] = useState<Record<string, WaitingTaskAction | undefined>>({});
   const [noticeByTaskId, setNoticeByTaskId] = useState<Record<string, TaskNotice | undefined>>({});
+  const [checkedResponseAtByTaskId, setCheckedResponseAtByTaskId] = useState<Record<string, string | undefined>>({});
   const [pageError, setPageError] = useState<string | null>(null);
   const announcedResponseKeysRef = useRef<Record<string, true>>({});
   const router = useRouter();
@@ -86,8 +87,21 @@ export default function WaitingPage() {
   const activeLinkByTaskId = useMemo<LinkByTask>(() => Object.fromEntries(Array.from(buildActiveWaitingLinkByTaskId(links).entries())), [links]);
 
   const getTaskSignal = useCallback(
-    (taskId: string, task: (typeof tasks)[number]) => buildWaitingTaskSignal(task, activeLinkByTaskId[taskId], latestResponseByTaskId.get(taskId)),
-    [activeLinkByTaskId, latestResponseByTaskId, tasks],
+    (taskId: string, task: (typeof tasks)[number]) => {
+      const baseSignal = buildWaitingTaskSignal(task, activeLinkByTaskId[taskId], latestResponseByTaskId.get(taskId));
+      const checkedAt = checkedResponseAtByTaskId[taskId];
+      if (!checkedAt || !baseSignal.latestResponseAt) return baseSignal;
+
+      const checkedAtMs = new Date(checkedAt).getTime();
+      const latestResponseMs = new Date(baseSignal.latestResponseAt).getTime();
+      if (Number.isNaN(checkedAtMs) || Number.isNaN(latestResponseMs) || latestResponseMs > checkedAtMs) return baseSignal;
+
+      return {
+        ...baseSignal,
+        hasUnreadResponse: false,
+      };
+    },
+    [activeLinkByTaskId, checkedResponseAtByTaskId, latestResponseByTaskId, tasks],
   );
 
   const baseWaitingGroups = useMemo(() => buildWaitingGroups(tasks), [tasks]);
@@ -299,6 +313,8 @@ export default function WaitingPage() {
         .eq('id', link.id)
         .eq('has_unread_response', true);
       if (updateError) throw updateError;
+      const checkedAt = latestResponseByTaskId.get(taskId)?.createdAt ?? new Date().toISOString();
+      setCheckedResponseAtByTaskId((current) => ({ ...current, [taskId]: checkedAt }));
       setLinks((current) => current.map((item) => (item.task_id === taskId && item.is_active ? { ...item, has_unread_response: false } : item)));
       await loadWaitingContext();
       await reload();
