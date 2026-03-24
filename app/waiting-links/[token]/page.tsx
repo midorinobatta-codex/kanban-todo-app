@@ -17,6 +17,7 @@ type PublicWaitingLink = {
   expires_at: string | null;
   latest_response_at: string | null;
 };
+type SupabaseLikeError = { message?: string; code?: string };
 
 export default function WaitingLinkPublicPage() {
   const params = useParams<{ token: string }>();
@@ -32,6 +33,22 @@ export default function WaitingLinkPublicPage() {
   const [responseDueDate, setResponseDueDate] = useState('');
   const [comment, setComment] = useState('');
 
+  const getRpcErrorMessage = (prefix: string, err: unknown) => {
+    if (typeof err === 'object' && err !== null) {
+      const { message, code } = err as SupabaseLikeError;
+      const text = message?.toLowerCase() ?? '';
+      if (
+        code === '42883' ||
+        text.includes("function public.get_waiting_link_public") ||
+        text.includes("function public.submit_waiting_response") ||
+        text.includes("relation \"public.waiting_links\" does not exist")
+      ) {
+        return `${prefix} Waiting 用のDB関数/テーブルが未適用です。管理者にセットアップ状況を確認してください。`;
+      }
+    }
+    return prefix;
+  };
+
   useEffect(() => {
     if (!token) return;
 
@@ -41,7 +58,7 @@ export default function WaitingLinkPublicPage() {
       const supabase = getSupabaseClient();
       const { data, error: rpcError } = await supabase.rpc('get_waiting_link_public', { p_token: token });
       if (rpcError) {
-        setError('リンクの取得に失敗しました。');
+        setError(getRpcErrorMessage('リンクの取得に失敗しました。', rpcError));
         setLoading(false);
         return;
       }
@@ -75,7 +92,7 @@ export default function WaitingLinkPublicPage() {
     });
 
     if (rpcError) {
-      setError('返信の送信に失敗しました。時間をおいて再度お試しください。');
+      setError(getRpcErrorMessage('返信の送信に失敗しました。時間をおいて再度お試しください。', rpcError));
       setSaving(false);
       return;
     }
