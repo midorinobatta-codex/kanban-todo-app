@@ -14,14 +14,17 @@ import { generateWaitingToken } from '@/lib/waiting-links/token';
 import { getWaitingLinkState, truncateComment } from '@/lib/waiting-links/presentation';
 
 type LinkByTask = Record<string, WaitingLink | null>;
+type WaitingTaskAction = 'create' | 'reissue' | 'revoke' | 'check';
+type TaskNotice = { type: 'success' | 'error'; message: string };
 
 export default function WaitingPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [links, setLinks] = useState<WaitingLink[]>([]);
   const [linkLoading, setLinkLoading] = useState(true);
-  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
-  const [notice, setNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [pendingActionByTaskId, setPendingActionByTaskId] = useState<Record<string, WaitingTaskAction | undefined>>({});
+  const [noticeByTaskId, setNoticeByTaskId] = useState<Record<string, TaskNotice | undefined>>({});
+  const [pageError, setPageError] = useState<string | null>(null);
   const router = useRouter();
   const { tasks, isLoading, error, reload } = useTasks();
   const { append } = useTaskHistory();
@@ -54,7 +57,9 @@ export default function WaitingPage() {
       .order('created_at', { ascending: false });
 
     if (loadError) {
-      setNotice({ type: 'error', message: '返信リンクの取得に失敗しました。再読み込みしてください。' });
+      setPageError('返信リンクの取得に失敗しました。再読み込みしてください。');
+    } else {
+      setPageError(null);
     }
     setLinks((data as WaitingLink[] | null) ?? []);
     setLinkLoading(false);
@@ -71,6 +76,7 @@ export default function WaitingPage() {
   const activeLinkByTaskId = useMemo<LinkByTask>(() => {
     const map: LinkByTask = {};
     for (const link of links) {
+      if (!link.is_active) continue;
       if (!map[link.task_id] || new Date(map[link.task_id]!.created_at).getTime() < new Date(link.created_at).getTime()) {
         map[link.task_id] = link;
       }
@@ -89,11 +95,41 @@ export default function WaitingPage() {
     [activeLinkByTaskId, allWaiting],
   );
 
+  const startTaskAction = (taskId: string, action: WaitingTaskAction) => {
+    setPendingActionByTaskId((current) => ({ ...current, [taskId]: action }));
+    setNoticeByTaskId((current) => ({ ...current, [taskId]: undefined }));
+  };
+
+  const finishTaskAction = (taskId: string) => {
+    setPendingActionByTaskId((current) => ({ ...current, [taskId]: undefined }));
+  };
+
+  const setTaskNotice = (taskId: string, notice: TaskNotice) => {
+    setNoticeByTaskId((current) => ({ ...current, [taskId]: notice }));
+  };
+
+  const getSupabaseErrorMessage = (err: unknown) => {
+    if (typeof err === 'object' && err !== null && 'message' in err && typeof (err as { message?: string }).message === 'string') {
+      return (err as { message: string }).message;
+    }
+    return null;
+  };
+
   const createOrReissueLink = async (taskId: string, reissue = false) => {
     const task = tasks.find((item) => item.id === taskId);
     if (!task || !session) return;
-    setBusyTaskId(taskId);
-    setNotice(null);
+    const activeLink = activeLinkByTaskId[taskId];
+
+    if (reissue && !activeLink) {
+      setTaskNotice(taskId, { type: 'error', message: '既存の有効な返信リンクがないため、再発行できません。先に返信リンクを作成してください。' });
+      return;
+    }
+    if (!reissue && activeLink) {
+      setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクが既に存在します。再発行を利用してください。' });
+      return;
+    }
+
+    startTaskAction(taskId, reissue ? 'reissue' : 'create');
 
     const supabase = getSupabaseClient();
     try {
@@ -127,53 +163,74 @@ export default function WaitingPage() {
         contextId: task.id,
       });
 
+      let clipboardCopyFailed = false;
       try {
         await navigator.clipboard.writeText(`${window.location.origin}/waiting-links/${token}`);
       } catch {
-        setNotice({
-          type: 'success',
-          message: `${reissue ? '返信リンクを再発行' : '返信リンクを作成'}しました。共有URLのコピーはブラウザ制限で失敗しました。`,
-        });
+        clipboardCopyFailed = true;
       }
 
       await loadLinks();
-      setNotice((current) => current ?? { type: 'success', message: `${reissue ? '返信リンクを再発行' : '返信リンクを作成'}しました。` });
-    } catch {
-      setNotice({ type: 'error', message: `${reissue ? '返信リンクの再発行' : '返信リンクの作成'}に失敗しました。時間をおいて再試行してください。` });
+      setTaskNotice(taskId, {
+        type: 'success',
+        message: clipboardCopyFailed
+          ? `${reissue ? '返信リンクを再発行' : '返信リンクを作成'}しました。共有URLのコピーはブラウザ制限で失敗しました。`
+          : `${reissue ? '返信リンクを再発行' : '返信リンクを作成'}しました。`,
+      });
+    } catch (err) {
+      const detail = getSupabaseErrorMessage(err);
+      setTaskNotice(taskId, {
+        type: 'error',
+        message: `${reissue ? '返信リンクの再発行' : '返信リンクの作成'}に失敗しました。${detail ? `(${detail})` : '時間をおいて再試行してください。'}`,
+      });
     } finally {
-      setBusyTaskId(null);
+      finishTaskAction(taskId);
     }
   };
 
   const revokeLink = async (taskId: string) => {
     const link = activeLinkByTaskId[taskId];
-    if (!link) return;
-    setBusyTaskId(taskId);
-    setNotice(null);
+    if (!link) {
+      setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、無効化できません。' });
+      return;
+    }
+    startTaskAction(taskId, 'revoke');
 
     try {
       const supabase = getSupabaseClient();
       const { error: revokeError } = await supabase.from('waiting_links').update({ is_active: false }).eq('id', link.id);
       if (revokeError) throw revokeError;
       await loadLinks();
-      setNotice({ type: 'success', message: '返信リンクを無効化しました。' });
-    } catch {
-      setNotice({ type: 'error', message: '返信リンクの無効化に失敗しました。' });
+      setTaskNotice(taskId, { type: 'success', message: '返信リンクを無効化しました。' });
+    } catch (err) {
+      const detail = getSupabaseErrorMessage(err);
+      setTaskNotice(taskId, { type: 'error', message: `返信リンクの無効化に失敗しました。${detail ? `(${detail})` : ''}` });
     } finally {
-      setBusyTaskId(null);
+      finishTaskAction(taskId);
     }
   };
 
   const markAsChecked = async (taskId: string) => {
     const link = activeLinkByTaskId[taskId];
-    if (!link) return;
-    setBusyTaskId(taskId);
+    if (!link) {
+      setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、返信確認済みにできません。' });
+      return;
+    }
+    startTaskAction(taskId, 'check');
 
-    const supabase = getSupabaseClient();
-    await supabase.from('waiting_links').update({ has_unread_response: false }).eq('id', link.id);
-    await loadLinks();
-    await reload();
-    setBusyTaskId(null);
+    try {
+      const supabase = getSupabaseClient();
+      const { error: updateError } = await supabase.from('waiting_links').update({ has_unread_response: false }).eq('id', link.id);
+      if (updateError) throw updateError;
+      await loadLinks();
+      await reload();
+      setTaskNotice(taskId, { type: 'success', message: '返信を確認済みにしました。' });
+    } catch (err) {
+      const detail = getSupabaseErrorMessage(err);
+      setTaskNotice(taskId, { type: 'error', message: `返信確認の更新に失敗しました。${detail ? `(${detail})` : ''}` });
+    } finally {
+      finishTaskAction(taskId);
+    }
   };
 
   if (authLoading || !session) {
@@ -208,11 +265,7 @@ export default function WaitingPage() {
       </section>
 
       {error ? <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</p> : null}
-      {notice ? (
-        <p className={`rounded-xl border px-4 py-3 text-sm ${notice.type === 'error' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-          {notice.message}
-        </p>
-      ) : null}
+      {pageError ? <p className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{pageError}</p> : null}
 
       {isLoading || linkLoading ? (
         <section className="rounded-2xl border border-slate-200 bg-white px-5 py-10 text-center text-slate-500 shadow-sm">Waiting を読み込み中です...</section>
@@ -241,6 +294,9 @@ export default function WaitingPage() {
                   const link = activeLinkByTaskId[task.id];
                   const state = getWaitingLinkState(link ?? null, Boolean(task.assignee?.trim()), isWaitingResponseOverdue(task));
                   const latestStatus = link?.latest_response_status ? WAITING_RESPONSE_STATUS_LABELS[link.latest_response_status] : null;
+                  const pendingAction = pendingActionByTaskId[task.id];
+                  const taskNotice = noticeByTaskId[task.id];
+                  const isPending = Boolean(pendingAction);
 
                   return (
                     <div
@@ -277,10 +333,10 @@ export default function WaitingPage() {
                       </div>
 
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <button type="button" disabled={busyTaskId === task.id} onClick={() => void createOrReissueLink(task.id, false)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{busyTaskId === task.id ? '処理中...' : '返信リンク作成'}</button>
-                        <button type="button" disabled={busyTaskId === task.id} onClick={() => void createOrReissueLink(task.id, true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{busyTaskId === task.id ? '処理中...' : '再発行'}</button>
-                        <button type="button" disabled={!link || busyTaskId === task.id} onClick={() => void revokeLink(task.id)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">無効化</button>
-                        <button type="button" disabled={!link || busyTaskId === task.id} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">返信を確認済みにする</button>
+                        <button type="button" disabled={isPending || Boolean(link)} onClick={() => void createOrReissueLink(task.id, false)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'create' ? '作成中...' : '返信リンク作成'}</button>
+                        <button type="button" disabled={isPending || !link} onClick={() => void createOrReissueLink(task.id, true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'reissue' ? '再発行中...' : '再発行'}</button>
+                        <button type="button" disabled={!link || isPending} onClick={() => void revokeLink(task.id)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">{pendingAction === 'revoke' ? '無効化中...' : '無効化'}</button>
+                        <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
                         {link ? (
                           <button
                             type="button"
@@ -291,6 +347,11 @@ export default function WaitingPage() {
                           </button>
                         ) : null}
                       </div>
+                      {taskNotice ? (
+                        <p className={`mt-2 rounded-lg border px-3 py-2 text-xs ${taskNotice.type === 'error' ? 'border-rose-200 bg-rose-50 text-rose-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                          {taskNotice.message}
+                        </p>
+                      ) : null}
                     </div>
                   );
                 })}
