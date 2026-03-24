@@ -1,22 +1,34 @@
 'use client';
 
 import Link from 'next/link';
-import { useDeferredValue, useMemo, useState, type ReactNode } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { AlertStrip, type AlertStripItem } from '@/components/ui/alert-strip';
 import { useProjects } from '@/lib/hooks/use-projects';
 import { useTasks } from '@/lib/hooks/use-tasks';
 import { buildHealthOverview } from '@/lib/tasks/health';
 import { formatDate, formatProjectDisplayName } from '@/lib/tasks/presentation';
 import { getTaskMap } from '@/lib/tasks/relationships';
+import { getSupabaseClient } from '@/lib/supabase/client';
+import type { WaitingLink } from '@/lib/types';
 
 export default function ProjectsHealthPage() {
   const { projects, isLoading, error } = useProjects();
   const { tasks, error: tasksError } = useTasks();
+  const [waitingLinks, setWaitingLinks] = useState<WaitingLink[]>([]);
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);
 
   const taskMap = useMemo(() => getTaskMap(tasks), [tasks]);
-  const overview = useMemo(() => buildHealthOverview(projects, tasks, taskMap), [projects, taskMap, tasks]);
+  const overview = useMemo(() => buildHealthOverview(projects, tasks, taskMap, waitingLinks), [projects, taskMap, tasks, waitingLinks]);
+
+  useEffect(() => {
+    const load = async () => {
+      const supabase = getSupabaseClient();
+      const { data } = await supabase.from('waiting_links').select('*').order('created_at', { ascending: false });
+      setWaitingLinks((data as WaitingLink[] | null) ?? []);
+    };
+    void load();
+  }, []);
 
   const filteredRows = useMemo(() => {
     const normalized = deferredQuery.trim().toLowerCase();
@@ -35,6 +47,15 @@ export default function ProjectsHealthPage() {
     if (overview.waitingOverdueCount > 0) {
       items.push({ id: 'waiting', label: 'Waiting期限超過', count: `${overview.waitingOverdueCount}件`, tone: 'danger' });
     }
+    if (overview.waitingUnreadCount > 0) {
+      items.push({ id: 'waiting-unread', label: '返信あり未確認', count: `${overview.waitingUnreadCount}件`, tone: 'warning' });
+    }
+    if (overview.waitingQuestionCount > 0) {
+      items.push({ id: 'waiting-question', label: '相手から質問', count: `${overview.waitingQuestionCount}件`, tone: 'warning' });
+    }
+    if (overview.waitingLinkMissingCount > 0) {
+      items.push({ id: 'waiting-no-link', label: 'リンク未発行', count: `${overview.waitingLinkMissingCount}件`, tone: 'info' });
+    }
     if (overview.projectWithoutNextActionCount > 0) {
       items.push({ id: 'no-next-action', label: '次アクション未設定PJ', count: `${overview.projectWithoutNextActionCount}件`, tone: 'warning' });
     }
@@ -42,7 +63,7 @@ export default function ProjectsHealthPage() {
       items.push({ id: 'important-urgent', label: '高重要×高緊急', count: `${overview.highImportanceHighUrgencyCount}件`, tone: 'info' });
     }
     return items;
-  }, [overview.highImportanceHighUrgencyCount, overview.projectWithoutNextActionCount, overview.stalledTaskCount, overview.waitingOverdueCount]);
+  }, [overview.highImportanceHighUrgencyCount, overview.projectWithoutNextActionCount, overview.stalledTaskCount, overview.waitingLinkMissingCount, overview.waitingOverdueCount, overview.waitingQuestionCount, overview.waitingUnreadCount]);
 
   return (
     <main className="min-h-screen bg-slate-100 py-8 text-slate-900">
@@ -75,6 +96,9 @@ export default function ProjectsHealthPage() {
         <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <StatCard label="停滞案件数" value={`${overview.stalledTaskCount}件`} danger={overview.stalledTaskCount > 0} />
           <StatCard label="Waiting期限超過" value={`${overview.waitingOverdueCount}件`} danger={overview.waitingOverdueCount > 0} />
+          <StatCard label="返信あり未確認" value={`${overview.waitingUnreadCount}件`} danger={overview.waitingUnreadCount > 0} />
+          <StatCard label="相手から質問あり" value={`${overview.waitingQuestionCount}件`} danger={overview.waitingQuestionCount > 0} />
+          <StatCard label="リンク未発行" value={`${overview.waitingLinkMissingCount}件`} danger={overview.waitingLinkMissingCount > 0} />
           <StatCard label="直近更新日" value={formatDate(overview.latestTaskUpdatedAt, '更新なし')} />
           <StatCard label="次アクション未設定 project" value={`${overview.projectWithoutNextActionCount}件`} danger={overview.projectWithoutNextActionCount > 0} />
           <StatCard label="進める一手なし project" value={`${overview.projectWithoutActiveActionCount}件`} danger={overview.projectWithoutActiveActionCount > 0} />
@@ -185,6 +209,8 @@ function ProjectHealthCard({ item }: { item: ReturnType<typeof buildHealthOvervi
         <div className="flex flex-wrap gap-2 text-xs">
           <MetricPill label="停滞" value={item.stalledTaskCount} danger={item.stalledTaskCount > 0} />
           <MetricPill label="Waiting超過" value={item.waitingOverdueCount} danger={item.waitingOverdueCount > 0} />
+          <MetricPill label="未確認返信" value={item.waitingUnreadCount} danger={item.waitingUnreadCount > 0} />
+          <MetricPill label="質問" value={item.waitingQuestionCount} danger={item.waitingQuestionCount > 0} />
           <MetricPill label="高重×高緊" value={item.highImportanceHighUrgencyCount} />
         </div>
       </div>
@@ -198,9 +224,14 @@ function ProjectHealthCard({ item }: { item: ReturnType<typeof buildHealthOvervi
           {item.relationIssue ? <p className="text-xs text-slate-500">理由: {item.relationIssue.reason} / {item.relationIssue.detail}</p> : null}
         </div>
         <div className="flex items-end justify-end">
-          <Link href={`/projects/${item.project.id}`} className="rounded-lg border border-slate-900 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
-            詳細を見る
-          </Link>
+          <div className="flex gap-2">
+            <Link href="/waiting" className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+              Waiting
+            </Link>
+            <Link href={`/projects/${item.project.id}`} className="rounded-lg border border-slate-900 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-100">
+              詳細を見る
+            </Link>
+          </div>
         </div>
       </div>
     </div>

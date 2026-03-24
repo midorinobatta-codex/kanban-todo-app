@@ -137,6 +137,7 @@ export type WaitingLink = {
   latest_response_at: string | null;
   latest_response_summary: string | null;
   latest_response_status: WaitingResponseStatus | null;
+  latest_response_due_date: string | null;
   created_at: string;
   updated_at: string;
 };

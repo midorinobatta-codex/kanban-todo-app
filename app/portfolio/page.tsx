@@ -52,6 +52,9 @@ export default function PortfolioPage() {
           <StatCard label="進行停滞" value={`${overview.summary.staleCount}`} danger={overview.summary.staleCount > 0} />
           <StatCard label="次アクション未設定PJ" value={`${overview.summary.noNextActionProjectCount}`} danger={overview.summary.noNextActionProjectCount > 0} />
           <StatCard label="直近更新なしPJ" value={`${overview.summary.noRecentUpdateCount}`} danger={overview.summary.noRecentUpdateCount > 0} />
+          <StatCard label="返信あり未確認PJ" value={`${overview.summary.waitingUnreadCount}`} danger={overview.summary.waitingUnreadCount > 0} />
+          <StatCard label="質問ありPJ" value={`${overview.summary.waitingQuestionCount}`} danger={overview.summary.waitingQuestionCount > 0} />
+          <StatCard label="リンク未発行PJ" value={`${overview.summary.waitingLinkMissingCount}`} danger={overview.summary.waitingLinkMissingCount > 0} />
         </section>
 
         <section className="grid gap-6 xl:grid-cols-[minmax(0,1.2fr)_360px]">
