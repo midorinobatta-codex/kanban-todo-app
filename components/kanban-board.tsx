@@ -2601,6 +2601,12 @@ export function KanbanBoard({
             >
               Projects
             </Link>
+            <Link
+              href="/portfolio"
+              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
+            >
+              Portfolio
+            </Link>
             <button
               type="button"
               onClick={() => void fetchTasks(true)}
