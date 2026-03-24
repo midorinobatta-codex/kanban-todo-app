@@ -16,6 +16,7 @@ import { getWaitingLinkState, truncateComment } from '@/lib/waiting-links/presen
 type LinkByTask = Record<string, WaitingLink | null>;
 type WaitingTaskAction = 'create' | 'reissue' | 'revoke' | 'check';
 type TaskNotice = { type: 'success' | 'error'; message: string };
+type SupabaseLikeError = { message?: string; code?: string };
 
 export default function WaitingPage() {
   const [session, setSession] = useState<Session | null>(null);
@@ -57,7 +58,7 @@ export default function WaitingPage() {
       .order('created_at', { ascending: false });
 
     if (loadError) {
-      setPageError('返信リンクの取得に失敗しました。再読み込みしてください。');
+      setPageError(getWaitingSchemaErrorMessage('返信リンクの取得に失敗しました。', loadError));
     } else {
       setPageError(null);
     }
@@ -109,10 +110,25 @@ export default function WaitingPage() {
   };
 
   const getSupabaseErrorMessage = (err: unknown) => {
-    if (typeof err === 'object' && err !== null && 'message' in err && typeof (err as { message?: string }).message === 'string') {
-      return (err as { message: string }).message;
+    if (typeof err === 'object' && err !== null && 'message' in err && typeof (err as SupabaseLikeError).message === 'string') {
+      return (err as SupabaseLikeError).message ?? null;
     }
     return null;
+  };
+
+  const isWaitingSchemaMissingError = (err: unknown) => {
+    if (typeof err !== 'object' || err === null) return false;
+    const { message, code } = err as SupabaseLikeError;
+    const text = message?.toLowerCase() ?? '';
+    return code === '42P01' || text.includes("could not find the table 'public.waiting_links'") || text.includes("relation \"public.waiting_links\" does not exist");
+  };
+
+  const getWaitingSchemaErrorMessage = (prefix: string, err: unknown) => {
+    if (isWaitingSchemaMissingError(err)) {
+      return `${prefix} Waiting 用のDBテーブル（public.waiting_links）が未適用です。supabase.sql または db/add-waiting-links.sql を適用してください。`;
+    }
+    const detail = getSupabaseErrorMessage(err);
+    return `${prefix}${detail ? `(${detail})` : '時間をおいて再試行してください。'}`;
   };
 
   const createOrReissueLink = async (taskId: string, reissue = false) => {
@@ -178,10 +194,9 @@ export default function WaitingPage() {
           : `${reissue ? '返信リンクを再発行' : '返信リンクを作成'}しました。`,
       });
     } catch (err) {
-      const detail = getSupabaseErrorMessage(err);
       setTaskNotice(taskId, {
         type: 'error',
-        message: `${reissue ? '返信リンクの再発行' : '返信リンクの作成'}に失敗しました。${detail ? `(${detail})` : '時間をおいて再試行してください。'}`,
+        message: getWaitingSchemaErrorMessage(`${reissue ? '返信リンクの再発行' : '返信リンクの作成'}に失敗しました。`, err),
       });
     } finally {
       finishTaskAction(taskId);
@@ -203,8 +218,7 @@ export default function WaitingPage() {
       await loadLinks();
       setTaskNotice(taskId, { type: 'success', message: '返信リンクを無効化しました。' });
     } catch (err) {
-      const detail = getSupabaseErrorMessage(err);
-      setTaskNotice(taskId, { type: 'error', message: `返信リンクの無効化に失敗しました。${detail ? `(${detail})` : ''}` });
+      setTaskNotice(taskId, { type: 'error', message: getWaitingSchemaErrorMessage('返信リンクの無効化に失敗しました。', err) });
     } finally {
       finishTaskAction(taskId);
     }
@@ -226,8 +240,7 @@ export default function WaitingPage() {
       await reload();
       setTaskNotice(taskId, { type: 'success', message: '返信を確認済みにしました。' });
     } catch (err) {
-      const detail = getSupabaseErrorMessage(err);
-      setTaskNotice(taskId, { type: 'error', message: `返信確認の更新に失敗しました。${detail ? `(${detail})` : ''}` });
+      setTaskNotice(taskId, { type: 'error', message: getWaitingSchemaErrorMessage('返信確認の更新に失敗しました。', err) });
     } finally {
       finishTaskAction(taskId);
     }
