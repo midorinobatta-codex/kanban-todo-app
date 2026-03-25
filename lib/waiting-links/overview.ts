@@ -27,6 +27,10 @@ export type WaitingTaskSignal = {
   latestResponseResponder: string | null;
 };
 
+export function shouldShowMarkResponseCheckedAction(signal: WaitingTaskSignal) {
+  return signal.hasUnreadResponse;
+}
+
 export function buildLatestWaitingLinkByTaskId(links: WaitingLink[]) {
   const map = new Map<string, WaitingLink>();
   for (const link of links) {
