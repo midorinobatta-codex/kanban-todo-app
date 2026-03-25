@@ -18,6 +18,7 @@ import {
   type WaitingResponseDigest,
   buildWaitingTaskSignal,
   getWaitingTaskPriorityScore,
+  hasUnreadWaitingResponse,
   shouldShowMarkResponseCheckedAction,
 } from '@/lib/waiting-links/overview';
 
@@ -132,7 +133,7 @@ export default function WaitingPage() {
       .map((group) => ({
         ...group,
         items: group.items.filter(({ task, signal }) => {
-          if (waitingFilter === 'unread') return signal.hasUnreadResponse;
+          if (waitingFilter === 'unread') return hasUnreadWaitingResponse(signal);
           if (waitingFilter === 'question') return signal.hasQuestion;
           if (waitingFilter === 'no_link') return signal.isLinkMissing;
           if (waitingFilter === 'overdue') return isWaitingResponseOverdue(task);
@@ -149,7 +150,7 @@ export default function WaitingPage() {
       overdue: allWaiting.filter((task) => isWaitingResponseOverdue(task)).length,
       noDate: allWaiting.filter((task) => isWaitingWithoutResponseDate(task)).length,
       noOwner: allWaiting.filter((task) => !task.assignee?.trim()).length,
-      unread: waitingTaskViews.filter((view) => view.signal.hasUnreadResponse).length,
+      unread: waitingTaskViews.filter((view) => hasUnreadWaitingResponse(view.signal)).length,
       questions: waitingTaskViews.filter((view) => view.signal.hasQuestion).length,
       noLink: waitingTaskViews.filter((view) => view.signal.isLinkMissing).length,
     }),
@@ -302,13 +303,13 @@ export default function WaitingPage() {
     }
   };
 
-  const markAsChecked = async (taskId: string) => {
+  const markAsChecked = async (taskId: string, hasUnreadResponse: boolean) => {
     const link = activeLinkByTaskId[taskId];
     if (!link) {
       setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、返信確認済みにできません。' });
       return;
     }
-    if (!link.has_unread_response) {
+    if (!hasUnreadResponse) {
       setTaskNotice(taskId, { type: 'success', message: 'この task の返信はすでに確認済みです。' });
       return;
     }
@@ -400,6 +401,7 @@ export default function WaitingPage() {
               </div>
               <div className="grid gap-3">
                 {group.items.map(({ task, link, signal }) => {
+                  const hasUnreadResponse = hasUnreadWaitingResponse(signal);
                   const alertLevel = getWaitingAlertLevel(task);
                   const pendingAction = pendingActionByTaskId[task.id];
                   const taskNotice = noticeByTaskId[task.id];
@@ -435,7 +437,7 @@ export default function WaitingPage() {
                           {isWaitingResponseOverdue(task) ? <span className="rounded-full bg-rose-100 px-2 py-1 font-semibold text-rose-700">回答予定日超過</span> : null}
                           {!task.assignee?.trim() ? <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-700">相手未設定</span> : null}
                           {isWaitingWithoutResponseDate(task) ? <span className="rounded-full bg-amber-100 px-2 py-1 font-semibold text-amber-700">回答日未設定</span> : null}
-                          {signal.hasUnreadResponse ? <span className="rounded-full bg-sky-100 px-2 py-1 font-semibold text-sky-700">返信あり未確認</span> : null}
+                          {hasUnreadResponse ? <span className="rounded-full bg-sky-100 px-2 py-1 font-semibold text-sky-700">返信あり未確認</span> : null}
                           {signal.hasQuestion ? <span className="rounded-full bg-violet-100 px-2 py-1 font-semibold text-violet-700">確認したいことあり</span> : null}
                           {signal.hasCompletedResponse ? <span className="rounded-full bg-emerald-100 px-2 py-1 font-semibold text-emerald-700">完了返答</span> : null}
                           {signal.isLinkMissing ? <span className="rounded-full bg-slate-200 px-2 py-1 font-semibold text-slate-700">リンク未発行</span> : null}
@@ -447,7 +449,7 @@ export default function WaitingPage() {
                         <button type="button" disabled={isPending || !link} onClick={() => void createOrReissueLink(task.id, true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'reissue' ? '再発行中...' : '再発行'}</button>
                         <button type="button" disabled={!link || isPending} onClick={() => void revokeLink(task.id)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">{pendingAction === 'revoke' ? '無効化中...' : '無効化'}</button>
                         {shouldShowMarkResponseCheckedAction(signal) ? (
-                          <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
+                          <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id, hasUnreadResponse)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
                         ) : null}
                         {link ? (
                           <button
