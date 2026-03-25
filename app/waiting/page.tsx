@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Session } from '@supabase/supabase-js';
 import { getSupabaseClient } from '@/lib/supabase/client';
@@ -9,12 +9,13 @@ import { useTaskHistory } from '@/lib/tasks/history';
 import { useTasks } from '@/lib/hooks/use-tasks';
 import { buildWaitingGroups, getWaitingAlertLevel } from '@/lib/tasks/clarify';
 import { formatDate, isWaitingResponseOverdue, isWaitingWithoutResponseDate } from '@/lib/tasks/presentation';
-import { type WaitingLink, type WaitingResponse } from '@/lib/types';
+import { type Task, type WaitingLink, type WaitingResponse } from '@/lib/types';
 import { generateWaitingToken } from '@/lib/waiting-links/token';
 import { truncateComment } from '@/lib/waiting-links/presentation';
 import {
   buildActiveWaitingLinkByTaskId,
   buildLatestWaitingResponseByTaskId,
+  type WaitingResponseDigest,
   buildWaitingTaskSignal,
   getWaitingTaskPriorityScore,
   shouldShowMarkResponseCheckedAction,
@@ -25,6 +26,13 @@ type WaitingTaskAction = 'create' | 'reissue' | 'revoke' | 'check';
 type WaitingFilter = 'all' | 'unread' | 'question' | 'no_link' | 'overdue';
 type TaskNotice = { type: 'success' | 'error'; message: string };
 type SupabaseLikeError = { message?: string; code?: string };
+type WaitingTaskView = {
+  task: Task;
+  owner: string;
+  link: WaitingLink | null;
+  latestResponse?: WaitingResponseDigest;
+  signal: ReturnType<typeof buildWaitingTaskSignal>;
+};
 
 export default function WaitingPage() {
   const [session, setSession] = useState<Session | null>(null);
@@ -86,41 +94,44 @@ export default function WaitingPage() {
   const latestResponseByTaskId = useMemo(() => buildLatestWaitingResponseByTaskId(responses), [responses]);
   const activeLinkByTaskId = useMemo<LinkByTask>(() => Object.fromEntries(Array.from(buildActiveWaitingLinkByTaskId(links).entries())), [links]);
 
-  const getTaskSignal = useCallback(
-    (taskId: string, task: (typeof tasks)[number]) => {
-      return buildWaitingTaskSignal(task, activeLinkByTaskId[taskId], latestResponseByTaskId.get(taskId));
-    },
-    [activeLinkByTaskId, latestResponseByTaskId],
-  );
-
   const baseWaitingGroups = useMemo(() => buildWaitingGroups(tasks), [tasks]);
-  const waitingSignalByTaskId = useMemo(
+  const waitingTaskViews = useMemo(
     () =>
-      new Map(
-        baseWaitingGroups
-          .flatMap((group) => group.items)
-          .map((task) => [task.id, getTaskSignal(task.id, task)] as const),
-      ),
-    [baseWaitingGroups, getTaskSignal],
+      baseWaitingGroups
+        .flatMap((group) => group.items.map((task) => ({ owner: group.owner, task })))
+        .map(({ owner, task }) => {
+          const link = activeLinkByTaskId[task.id] ?? null;
+          const latestResponse = latestResponseByTaskId.get(task.id);
+          return {
+            task,
+            owner,
+            link,
+            latestResponse,
+            signal: buildWaitingTaskSignal(task, link, latestResponse),
+          };
+        }),
+    [activeLinkByTaskId, baseWaitingGroups, latestResponseByTaskId],
   );
 
   const waitingGroups = useMemo(() => {
-    const groups = baseWaitingGroups.map((group) => ({
-      ...group,
-      items: [...group.items].sort((left, right) => {
-        const leftSignal = waitingSignalByTaskId.get(left.id) ?? getTaskSignal(left.id, left);
-        const rightSignal = waitingSignalByTaskId.get(right.id) ?? getTaskSignal(right.id, right);
-        const scoreDiff = getWaitingTaskPriorityScore(right, rightSignal) - getWaitingTaskPriorityScore(left, leftSignal);
+    const groupedViews = waitingTaskViews.reduce<Record<string, WaitingTaskView[]>>((acc, item) => {
+      acc[item.owner] = [...(acc[item.owner] ?? []), item];
+      return acc;
+    }, {});
+
+    const groups = Object.entries(groupedViews).map(([owner, items]) => ({
+      owner,
+      items: [...items].sort((left, right) => {
+        const scoreDiff = getWaitingTaskPriorityScore(right.task, right.signal) - getWaitingTaskPriorityScore(left.task, left.signal);
         if (scoreDiff !== 0) return scoreDiff;
-        return new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
+        return new Date(left.task.created_at).getTime() - new Date(right.task.created_at).getTime();
       }),
     }));
     if (waitingFilter === 'all') return groups;
     return groups
       .map((group) => ({
         ...group,
-        items: group.items.filter((task) => {
-          const signal = waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task);
+        items: group.items.filter(({ task, signal }) => {
           if (waitingFilter === 'unread') return signal.hasUnreadResponse;
           if (waitingFilter === 'question') return signal.hasQuestion;
           if (waitingFilter === 'no_link') return signal.isLinkMissing;
@@ -129,20 +140,20 @@ export default function WaitingPage() {
         }),
       }))
       .filter((group) => group.items.length > 0);
-  }, [baseWaitingGroups, getTaskSignal, waitingFilter, waitingSignalByTaskId]);
+  }, [waitingFilter, waitingTaskViews]);
 
-  const allWaiting = useMemo(() => baseWaitingGroups.flatMap((group) => group.items), [baseWaitingGroups]);
+  const allWaiting = useMemo(() => waitingTaskViews.map((view) => view.task), [waitingTaskViews]);
 
   const summary = useMemo(
     () => ({
       overdue: allWaiting.filter((task) => isWaitingResponseOverdue(task)).length,
       noDate: allWaiting.filter((task) => isWaitingWithoutResponseDate(task)).length,
       noOwner: allWaiting.filter((task) => !task.assignee?.trim()).length,
-      unread: allWaiting.filter((task) => (waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task)).hasUnreadResponse).length,
-      questions: allWaiting.filter((task) => (waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task)).hasQuestion).length,
-      noLink: allWaiting.filter((task) => (waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task)).isLinkMissing).length,
+      unread: waitingTaskViews.filter((view) => view.signal.hasUnreadResponse).length,
+      questions: waitingTaskViews.filter((view) => view.signal.hasQuestion).length,
+      noLink: waitingTaskViews.filter((view) => view.signal.isLinkMissing).length,
     }),
-    [allWaiting, getTaskSignal, waitingSignalByTaskId],
+    [allWaiting, waitingTaskViews],
   );
 
   useEffect(() => {
@@ -383,16 +394,13 @@ export default function WaitingPage() {
                   <p className="text-sm text-slate-500">{group.items.length}件 / 要フォロー順に表示</p>
                 </div>
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <span className="rounded-full bg-rose-50 px-2.5 py-1 font-medium text-rose-700">超過 {group.items.filter((task) => isWaitingResponseOverdue(task)).length}</span>
-                  <span className="rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-700">未設定 {group.items.filter((task) => isWaitingWithoutResponseDate(task)).length}</span>
+                  <span className="rounded-full bg-rose-50 px-2.5 py-1 font-medium text-rose-700">超過 {group.items.filter(({ task }) => isWaitingResponseOverdue(task)).length}</span>
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 font-medium text-amber-700">未設定 {group.items.filter(({ task }) => isWaitingWithoutResponseDate(task)).length}</span>
                 </div>
               </div>
               <div className="grid gap-3">
-                {group.items.map((task) => {
+                {group.items.map(({ task, link, signal }) => {
                   const alertLevel = getWaitingAlertLevel(task);
-                  const link = activeLinkByTaskId[task.id];
-                  const latestResponse = latestResponseByTaskId.get(task.id);
-                  const signal = waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task);
                   const pendingAction = pendingActionByTaskId[task.id];
                   const taskNotice = noticeByTaskId[task.id];
                   const isPending = Boolean(pendingAction);
