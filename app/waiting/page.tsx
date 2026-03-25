@@ -18,6 +18,7 @@ import {
   type WaitingResponseDigest,
   buildWaitingTaskSignal,
   getWaitingTaskPriorityScore,
+  shouldShowMarkResponseCheckedAction,
 } from '@/lib/waiting-links/overview';
 
 type LinkByTask = Record<string, WaitingLink | null>;
@@ -136,8 +137,8 @@ export default function WaitingPage() {
     return groups
       .map((group) => ({
         ...group,
-        items: group.items.filter(({ task, signal, link }) => {
-          if (waitingFilter === 'unread') return link?.has_unread_response === true;
+        items: group.items.filter(({ task, signal }) => {
+          if (waitingFilter === 'unread') return signal.hasUnreadResponse;
           if (waitingFilter === 'question') return signal.hasQuestion;
           if (waitingFilter === 'no_link') return signal.isLinkMissing;
           if (waitingFilter === 'overdue') return isWaitingResponseOverdue(task);
@@ -148,13 +149,14 @@ export default function WaitingPage() {
   }, [waitingFilter, waitingTaskViews]);
 
   const allWaiting = useMemo(() => waitingTaskViews.map((view) => view.task), [waitingTaskViews]);
+  const waitingTaskViewByTaskId = useMemo(() => new Map(waitingTaskViews.map((view) => [view.task.id, view])), [waitingTaskViews]);
 
   const summary = useMemo(
     () => ({
       overdue: allWaiting.filter((task) => isWaitingResponseOverdue(task)).length,
       noDate: allWaiting.filter((task) => isWaitingWithoutResponseDate(task)).length,
       noOwner: allWaiting.filter((task) => !task.assignee?.trim()).length,
-      unread: waitingTaskViews.filter((view) => view.link?.has_unread_response === true).length,
+      unread: waitingTaskViews.filter((view) => view.signal.hasUnreadResponse).length,
       questions: waitingTaskViews.filter((view) => view.signal.hasQuestion).length,
       noLink: waitingTaskViews.filter((view) => view.signal.isLinkMissing).length,
     }),
@@ -287,7 +289,8 @@ export default function WaitingPage() {
   };
 
   const revokeLink = async (taskId: string) => {
-    const link = activeLinkByTaskId[taskId];
+    const waitingTaskView = waitingTaskViewByTaskId.get(taskId);
+    const link = waitingTaskView?.link ?? activeLinkByTaskId[taskId];
     if (!link) {
       setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、無効化できません。' });
       return;
@@ -308,12 +311,13 @@ export default function WaitingPage() {
   };
 
   const markAsChecked = async (taskId: string) => {
-    const link = activeLinkByTaskId[taskId];
+    const waitingTaskView = waitingTaskViewByTaskId.get(taskId);
+    const link = waitingTaskView?.link ?? activeLinkByTaskId[taskId];
     if (!link) {
       setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、返信確認済みにできません。' });
       return;
     }
-    if (!link.has_unread_response) {
+    if (!waitingTaskView?.signal.hasUnreadResponse) {
       setTaskNotice(taskId, { type: 'success', message: 'この task の返信はすでに確認済みです。' });
       return;
     }
@@ -328,8 +332,7 @@ export default function WaitingPage() {
         .eq('has_unread_response', true);
       if (updateError) throw updateError;
       setLinks((current) => current.map((item) => (item.id === link.id ? { ...item, has_unread_response: false } : item)));
-      await loadWaitingContext();
-      await reload();
+      await Promise.all([loadWaitingContext(), reload()]);
       setTaskNotice(taskId, { type: 'success', message: '返信を確認済みにしました。' });
     } catch (err) {
       setTaskNotice(taskId, { type: 'error', message: getWaitingSchemaErrorMessage('返信確認の更新に失敗しました。', err) });
@@ -404,7 +407,7 @@ export default function WaitingPage() {
               </div>
               <div className="grid gap-3">
                 {group.items.map(({ task, link, signal }) => {
-                  const hasUnreadResponse = link?.has_unread_response === true;
+                  const hasUnreadResponse = shouldShowMarkResponseCheckedAction(signal);
                   const alertLevel = getWaitingAlertLevel(task);
                   const pendingAction = pendingActionByTaskId[task.id];
                   const taskNotice = noticeByTaskId[task.id];
