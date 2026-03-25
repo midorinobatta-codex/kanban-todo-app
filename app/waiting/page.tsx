@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Session } from '@supabase/supabase-js';
 import { getSupabaseClient } from '@/lib/supabase/client';
@@ -18,8 +18,6 @@ import {
   type WaitingResponseDigest,
   buildWaitingTaskSignal,
   getWaitingTaskPriorityScore,
-  hasUnreadWaitingResponse,
-  shouldShowMarkResponseCheckedAction,
 } from '@/lib/waiting-links/overview';
 
 type LinkByTask = Record<string, WaitingLink | null>;
@@ -46,6 +44,7 @@ export default function WaitingPage() {
   const [noticeByTaskId, setNoticeByTaskId] = useState<Record<string, TaskNotice | undefined>>({});
   const [pageError, setPageError] = useState<string | null>(null);
   const announcedResponseKeysRef = useRef<Record<string, true>>({});
+  const waitingContextRequestRef = useRef(0);
   const router = useRouter();
   const { tasks, isLoading, error, reload } = useTasks();
   const { append } = useTaskHistory();
@@ -69,13 +68,18 @@ export default function WaitingPage() {
     if (!authLoading && !session) router.replace('/login');
   }, [authLoading, router, session]);
 
-  const loadWaitingContext = async () => {
+  const loadWaitingContext = useCallback(async () => {
+    const requestId = waitingContextRequestRef.current + 1;
+    waitingContextRequestRef.current = requestId;
     setLinkLoading(true);
+
     const supabase = getSupabaseClient();
     const [{ data: linkData, error: linkError }, { data: responseData, error: responseError }] = await Promise.all([
       supabase.from('waiting_links').select('*').order('created_at', { ascending: false }),
       supabase.from('waiting_responses').select('*').order('created_at', { ascending: false }).limit(500),
     ]);
+
+    if (requestId !== waitingContextRequestRef.current) return;
 
     if (linkError || responseError) {
       setPageError(getWaitingSchemaErrorMessage('Waiting返信情報の取得に失敗しました。', linkError ?? responseError));
@@ -85,12 +89,12 @@ export default function WaitingPage() {
     setLinks((linkData as WaitingLink[] | null) ?? []);
     setResponses((responseData as WaitingResponse[] | null) ?? []);
     setLinkLoading(false);
-  };
+  }, []);
 
   useEffect(() => {
     if (!session) return;
     void loadWaitingContext();
-  }, [session]);
+  }, [loadWaitingContext, session]);
 
   const latestResponseByTaskId = useMemo(() => buildLatestWaitingResponseByTaskId(responses), [responses]);
   const activeLinkByTaskId = useMemo<LinkByTask>(() => Object.fromEntries(Array.from(buildActiveWaitingLinkByTaskId(links).entries())), [links]);
@@ -132,8 +136,8 @@ export default function WaitingPage() {
     return groups
       .map((group) => ({
         ...group,
-        items: group.items.filter(({ task, signal }) => {
-          if (waitingFilter === 'unread') return hasUnreadWaitingResponse(signal);
+        items: group.items.filter(({ task, signal, link }) => {
+          if (waitingFilter === 'unread') return link?.has_unread_response === true;
           if (waitingFilter === 'question') return signal.hasQuestion;
           if (waitingFilter === 'no_link') return signal.isLinkMissing;
           if (waitingFilter === 'overdue') return isWaitingResponseOverdue(task);
@@ -150,7 +154,7 @@ export default function WaitingPage() {
       overdue: allWaiting.filter((task) => isWaitingResponseOverdue(task)).length,
       noDate: allWaiting.filter((task) => isWaitingWithoutResponseDate(task)).length,
       noOwner: allWaiting.filter((task) => !task.assignee?.trim()).length,
-      unread: waitingTaskViews.filter((view) => hasUnreadWaitingResponse(view.signal)).length,
+      unread: waitingTaskViews.filter((view) => view.link?.has_unread_response === true).length,
       questions: waitingTaskViews.filter((view) => view.signal.hasQuestion).length,
       noLink: waitingTaskViews.filter((view) => view.signal.isLinkMissing).length,
     }),
@@ -303,13 +307,13 @@ export default function WaitingPage() {
     }
   };
 
-  const markAsChecked = async (taskId: string, hasUnreadResponse: boolean) => {
+  const markAsChecked = async (taskId: string) => {
     const link = activeLinkByTaskId[taskId];
     if (!link) {
       setTaskNotice(taskId, { type: 'error', message: '有効な返信リンクがないため、返信確認済みにできません。' });
       return;
     }
-    if (!hasUnreadResponse) {
+    if (!link.has_unread_response) {
       setTaskNotice(taskId, { type: 'success', message: 'この task の返信はすでに確認済みです。' });
       return;
     }
@@ -320,11 +324,10 @@ export default function WaitingPage() {
       const { error: updateError } = await supabase
         .from('waiting_links')
         .update({ has_unread_response: false })
-        .eq('task_id', taskId)
-        .eq('is_active', true)
+        .eq('id', link.id)
         .eq('has_unread_response', true);
       if (updateError) throw updateError;
-      setLinks((current) => current.map((item) => (item.task_id === taskId && item.is_active ? { ...item, has_unread_response: false } : item)));
+      setLinks((current) => current.map((item) => (item.id === link.id ? { ...item, has_unread_response: false } : item)));
       await loadWaitingContext();
       await reload();
       setTaskNotice(taskId, { type: 'success', message: '返信を確認済みにしました。' });
@@ -401,7 +404,7 @@ export default function WaitingPage() {
               </div>
               <div className="grid gap-3">
                 {group.items.map(({ task, link, signal }) => {
-                  const hasUnreadResponse = hasUnreadWaitingResponse(signal);
+                  const hasUnreadResponse = link?.has_unread_response === true;
                   const alertLevel = getWaitingAlertLevel(task);
                   const pendingAction = pendingActionByTaskId[task.id];
                   const taskNotice = noticeByTaskId[task.id];
@@ -448,8 +451,8 @@ export default function WaitingPage() {
                         <button type="button" disabled={isPending || Boolean(link)} onClick={() => void createOrReissueLink(task.id, false)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'create' ? '作成中...' : '返信リンク作成'}</button>
                         <button type="button" disabled={isPending || !link} onClick={() => void createOrReissueLink(task.id, true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'reissue' ? '再発行中...' : '再発行'}</button>
                         <button type="button" disabled={!link || isPending} onClick={() => void revokeLink(task.id)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">{pendingAction === 'revoke' ? '無効化中...' : '無効化'}</button>
-                        {shouldShowMarkResponseCheckedAction(signal) ? (
-                          <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id, hasUnreadResponse)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
+                        {hasUnreadResponse ? (
+                          <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
                         ) : null}
                         {link ? (
                           <button
