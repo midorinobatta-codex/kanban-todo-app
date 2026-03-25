@@ -17,6 +17,7 @@ import {
   buildLatestWaitingResponseByTaskId,
   buildWaitingTaskSignal,
   getWaitingTaskPriorityScore,
+  shouldShowMarkResponseCheckedAction,
 } from '@/lib/waiting-links/overview';
 
 type LinkByTask = Record<string, WaitingLink | null>;
@@ -34,7 +35,6 @@ export default function WaitingPage() {
   const [waitingFilter, setWaitingFilter] = useState<WaitingFilter>('all');
   const [pendingActionByTaskId, setPendingActionByTaskId] = useState<Record<string, WaitingTaskAction | undefined>>({});
   const [noticeByTaskId, setNoticeByTaskId] = useState<Record<string, TaskNotice | undefined>>({});
-  const [checkedResponseAtByTaskId, setCheckedResponseAtByTaskId] = useState<Record<string, string | undefined>>({});
   const [pageError, setPageError] = useState<string | null>(null);
   const announcedResponseKeysRef = useRef<Record<string, true>>({});
   const router = useRouter();
@@ -88,30 +88,28 @@ export default function WaitingPage() {
 
   const getTaskSignal = useCallback(
     (taskId: string, task: (typeof tasks)[number]) => {
-      const baseSignal = buildWaitingTaskSignal(task, activeLinkByTaskId[taskId], latestResponseByTaskId.get(taskId));
-      const checkedAt = checkedResponseAtByTaskId[taskId];
-      if (!checkedAt || !baseSignal.latestResponseAt) return baseSignal;
-
-      const checkedAtMs = new Date(checkedAt).getTime();
-      const latestResponseMs = new Date(baseSignal.latestResponseAt).getTime();
-      if (Number.isNaN(checkedAtMs) || Number.isNaN(latestResponseMs) || latestResponseMs > checkedAtMs) return baseSignal;
-
-      return {
-        ...baseSignal,
-        hasUnreadResponse: false,
-      };
+      return buildWaitingTaskSignal(task, activeLinkByTaskId[taskId], latestResponseByTaskId.get(taskId));
     },
-    [activeLinkByTaskId, checkedResponseAtByTaskId, latestResponseByTaskId, tasks],
+    [activeLinkByTaskId, latestResponseByTaskId],
   );
 
   const baseWaitingGroups = useMemo(() => buildWaitingGroups(tasks), [tasks]);
+  const waitingSignalByTaskId = useMemo(
+    () =>
+      new Map(
+        baseWaitingGroups
+          .flatMap((group) => group.items)
+          .map((task) => [task.id, getTaskSignal(task.id, task)] as const),
+      ),
+    [baseWaitingGroups, getTaskSignal],
+  );
 
   const waitingGroups = useMemo(() => {
     const groups = baseWaitingGroups.map((group) => ({
       ...group,
       items: [...group.items].sort((left, right) => {
-        const leftSignal = getTaskSignal(left.id, left);
-        const rightSignal = getTaskSignal(right.id, right);
+        const leftSignal = waitingSignalByTaskId.get(left.id) ?? getTaskSignal(left.id, left);
+        const rightSignal = waitingSignalByTaskId.get(right.id) ?? getTaskSignal(right.id, right);
         const scoreDiff = getWaitingTaskPriorityScore(right, rightSignal) - getWaitingTaskPriorityScore(left, leftSignal);
         if (scoreDiff !== 0) return scoreDiff;
         return new Date(left.created_at).getTime() - new Date(right.created_at).getTime();
@@ -122,7 +120,7 @@ export default function WaitingPage() {
       .map((group) => ({
         ...group,
         items: group.items.filter((task) => {
-          const signal = getTaskSignal(task.id, task);
+          const signal = waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task);
           if (waitingFilter === 'unread') return signal.hasUnreadResponse;
           if (waitingFilter === 'question') return signal.hasQuestion;
           if (waitingFilter === 'no_link') return signal.isLinkMissing;
@@ -131,7 +129,7 @@ export default function WaitingPage() {
         }),
       }))
       .filter((group) => group.items.length > 0);
-  }, [baseWaitingGroups, getTaskSignal, waitingFilter]);
+  }, [baseWaitingGroups, getTaskSignal, waitingFilter, waitingSignalByTaskId]);
 
   const allWaiting = useMemo(() => baseWaitingGroups.flatMap((group) => group.items), [baseWaitingGroups]);
 
@@ -140,11 +138,11 @@ export default function WaitingPage() {
       overdue: allWaiting.filter((task) => isWaitingResponseOverdue(task)).length,
       noDate: allWaiting.filter((task) => isWaitingWithoutResponseDate(task)).length,
       noOwner: allWaiting.filter((task) => !task.assignee?.trim()).length,
-      unread: allWaiting.filter((task) => getTaskSignal(task.id, task).hasUnreadResponse).length,
-      questions: allWaiting.filter((task) => getTaskSignal(task.id, task).hasQuestion).length,
-      noLink: allWaiting.filter((task) => getTaskSignal(task.id, task).isLinkMissing).length,
+      unread: allWaiting.filter((task) => (waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task)).hasUnreadResponse).length,
+      questions: allWaiting.filter((task) => (waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task)).hasQuestion).length,
+      noLink: allWaiting.filter((task) => (waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task)).isLinkMissing).length,
     }),
-    [allWaiting, getTaskSignal],
+    [allWaiting, getTaskSignal, waitingSignalByTaskId],
   );
 
   useEffect(() => {
@@ -310,11 +308,10 @@ export default function WaitingPage() {
       const { error: updateError } = await supabase
         .from('waiting_links')
         .update({ has_unread_response: false })
-        .eq('id', link.id)
+        .eq('task_id', taskId)
+        .eq('is_active', true)
         .eq('has_unread_response', true);
       if (updateError) throw updateError;
-      const checkedAt = latestResponseByTaskId.get(taskId)?.createdAt ?? new Date().toISOString();
-      setCheckedResponseAtByTaskId((current) => ({ ...current, [taskId]: checkedAt }));
       setLinks((current) => current.map((item) => (item.task_id === taskId && item.is_active ? { ...item, has_unread_response: false } : item)));
       await loadWaitingContext();
       await reload();
@@ -395,7 +392,7 @@ export default function WaitingPage() {
                   const alertLevel = getWaitingAlertLevel(task);
                   const link = activeLinkByTaskId[task.id];
                   const latestResponse = latestResponseByTaskId.get(task.id);
-                  const signal = getTaskSignal(task.id, task);
+                  const signal = waitingSignalByTaskId.get(task.id) ?? getTaskSignal(task.id, task);
                   const pendingAction = pendingActionByTaskId[task.id];
                   const taskNotice = noticeByTaskId[task.id];
                   const isPending = Boolean(pendingAction);
@@ -441,7 +438,7 @@ export default function WaitingPage() {
                         <button type="button" disabled={isPending || Boolean(link)} onClick={() => void createOrReissueLink(task.id, false)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'create' ? '作成中...' : '返信リンク作成'}</button>
                         <button type="button" disabled={isPending || !link} onClick={() => void createOrReissueLink(task.id, true)} className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50">{pendingAction === 'reissue' ? '再発行中...' : '再発行'}</button>
                         <button type="button" disabled={!link || isPending} onClick={() => void revokeLink(task.id)} className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-100 disabled:opacity-50">{pendingAction === 'revoke' ? '無効化中...' : '無効化'}</button>
-                        {signal.hasUnreadResponse ? (
+                        {shouldShowMarkResponseCheckedAction(signal) ? (
                           <button type="button" disabled={!link || isPending} onClick={() => void markAsChecked(task.id)} className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 hover:bg-sky-100 disabled:opacity-50">{pendingAction === 'check' ? '更新中...' : '返信を確認済みにする'}</button>
                         ) : null}
                         {link ? (
